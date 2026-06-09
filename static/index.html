@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lehi Power Load Forecast</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f0f4f8;
+      color: #1a202c;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #1a365d;
+      color: white;
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    }
+    header svg { flex-shrink: 0; }
+    header h1 { font-size: 1.4rem; font-weight: 600; letter-spacing: .01em; }
+    header p  { font-size: .8rem; opacity: .75; margin-top: 2px; }
+
+    main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+
+    /* Status bar */
+    #status-bar {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+      background: white;
+      border-radius: 8px;
+      padding: .75rem 1.25rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      font-size: .85rem;
+      flex-wrap: wrap;
+    }
+    .dot {
+      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
+    }
+    .dot.green  { background: #38a169; }
+    .dot.yellow { background: #d69e2e; animation: pulse 1s infinite; }
+    .dot.red    { background: #e53e3e; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    #status-text { font-weight: 500; }
+    #status-detail { color: #718096; margin-left: auto; }
+
+    /* Controls */
+    .controls {
+      background: white;
+      border-radius: 8px;
+      padding: 1.25rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      display: flex;
+      align-items: flex-end;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    .field { display: flex; flex-direction: column; gap: .35rem; }
+    label { font-size: .8rem; font-weight: 600; color: #4a5568; text-transform: uppercase; letter-spacing: .05em; }
+    input[type="date"] {
+      border: 1.5px solid #cbd5e0;
+      border-radius: 6px;
+      padding: .5rem .75rem;
+      font-size: .95rem;
+      outline: none;
+      transition: border-color .15s;
+    }
+    input[type="date"]:focus { border-color: #3182ce; }
+
+    button {
+      padding: .55rem 1.4rem;
+      border: none;
+      border-radius: 6px;
+      font-size: .95rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s, opacity .15s;
+    }
+    .btn-primary { background: #2b6cb0; color: white; }
+    .btn-primary:hover { background: #2c5282; }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-secondary { background: #edf2f7; color: #4a5568; font-size: .85rem; }
+    .btn-secondary:hover { background: #e2e8f0; }
+
+    /* Summary cards */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .card {
+      background: white;
+      border-radius: 8px;
+      padding: 1rem 1.25rem;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+      border-left: 4px solid transparent;
+    }
+    .card.peak  { border-color: #e53e3e; }
+    .card.min   { border-color: #3182ce; }
+    .card.avg   { border-color: #38a169; }
+    .card.hour  { border-color: #d69e2e; }
+    .card-label { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #718096; }
+    .card-value { font-size: 1.6rem; font-weight: 700; margin-top: .25rem; }
+    .card-unit  { font-size: .8rem; color: #a0aec0; margin-left: .2rem; }
+
+    /* Chart */
+    .chart-wrap {
+      background: white;
+      border-radius: 8px;
+      padding: 1.25rem;
+      box-shadow: 0 1px 4px rgba(0,0,0,.08);
+    }
+    .chart-title {
+      font-size: .9rem;
+      font-weight: 600;
+      color: #4a5568;
+      margin-bottom: 1rem;
+    }
+    #chart-container { position: relative; height: 320px; }
+
+    /* Hourly table */
+    #hourly-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1.25rem;
+      font-size: .875rem;
+    }
+    #hourly-table th {
+      text-align: left;
+      padding: .4rem .75rem;
+      background: #f7fafc;
+      border-bottom: 2px solid #e2e8f0;
+      font-weight: 600;
+      color: #4a5568;
+      font-size: .75rem;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    #hourly-table td {
+      padding: .35rem .75rem;
+      border-bottom: 1px solid #edf2f7;
+      color: #2d3748;
+    }
+    #hourly-table tr:last-child td { border-bottom: none; }
+    #hourly-table tr.peak-row td { font-weight: 700; background: #fffaf0; }
+
+    /* Error / info */
+    .message {
+      padding: 1rem 1.25rem;
+      border-radius: 8px;
+      font-size: .9rem;
+      margin-bottom: 1rem;
+    }
+    .message.error { background: #fff5f5; border: 1px solid #fed7d7; color: #c53030; }
+    .message.info  { background: #ebf8ff; border: 1px solid #bee3f8; color: #2b6cb0; }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+    <circle cx="18" cy="18" r="18" fill="#2b6cb0"/>
+    <path d="M18 8 L22 18 L18 16 L14 18 Z" fill="#fbd38d"/>
+    <path d="M18 16 L14 18 L18 28 L22 18 Z" fill="#f6ad55"/>
+  </svg>
+  <div>
+    <h1>Lehi Power Load Forecast</h1>
+    <p>Regression-based hourly load prediction using Open-Meteo weather</p>
+  </div>
+  <button class="btn-secondary" style="margin-left:auto" onclick="retrain()">↻ Retrain Model</button>
+</header>
+
+<main>
+  <div id="status-bar">
+    <div class="dot yellow" id="status-dot"></div>
+    <span id="status-text">Checking model status…</span>
+    <span id="status-detail"></span>
+  </div>
+
+  <div class="controls">
+    <div class="field">
+      <label for="date-input">Date</label>
+      <input type="date" id="date-input" />
+    </div>
+    <button class="btn-primary" id="forecast-btn" onclick="getForecast()">Get Report</button>
+  </div>
+
+  <div id="msg" class="hidden message"></div>
+
+  <div id="results" class="hidden">
+    <div class="cards">
+      <div class="card peak">
+        <div class="card-label">Peak Load</div>
+        <div class="card-value" id="c-peak">—<span class="card-unit">MW</span></div>
+      </div>
+      <div class="card hour">
+        <div class="card-label">Peak Hour</div>
+        <div class="card-value" id="c-peakhour">—</div>
+      </div>
+      <div class="card min">
+        <div class="card-label">Min Load</div>
+        <div class="card-value" id="c-min">—<span class="card-unit">MW</span></div>
+      </div>
+      <div class="card avg">
+        <div class="card-label">Avg Load</div>
+        <div class="card-value" id="c-avg">—<span class="card-unit">MW</span></div>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <div class="chart-title" id="chart-title">Hourly Forecast</div>
+      <div id="chart-container">
+        <canvas id="chart"></canvas>
+      </div>
+      <table id="hourly-table">
+        <thead>
+          <tr><th>Hour</th><th>Temp (°F)</th><th id="load-col-header">Load (kW)</th></tr>
+        </thead>
+        <tbody id="hourly-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<script>
+  let chart = null;
+
+  // Default to today
+  const today = new Date();
+  document.getElementById("date-input").value = today.toISOString().slice(0, 10);
+
+  function fmt12(hr) {
+    if (hr === 0)  return "12 AM";
+    if (hr < 12)  return `${hr} AM`;
+    if (hr === 12) return "12 PM";
+    return `${hr - 12} PM`;
+  }
+
+  function showMsg(text, type = "error") {
+    const el = document.getElementById("msg");
+    el.textContent = text;
+    el.className = `message ${type}`;
+    el.classList.remove("hidden");
+  }
+
+  function hideMsg() {
+    document.getElementById("msg").classList.add("hidden");
+  }
+
+  async function checkStatus() {
+    try {
+      const res = await fetch("/api/status");
+      const s = await res.json();
+      const dot  = document.getElementById("status-dot");
+      const text = document.getElementById("status-text");
+      const detail = document.getElementById("status-detail");
+
+      if (s.training) {
+        dot.className = "dot yellow";
+        text.textContent = "Training model…";
+        detail.textContent = "";
+        setTimeout(checkStatus, 3000);
+      } else if (s.trained) {
+        dot.className = "dot green";
+        text.textContent = "Model ready";
+        detail.textContent =
+          `${s.record_count.toLocaleString()} samples · ${s.date_range?.[0]} – ${s.date_range?.[1]} · R² ${s.r2}`;
+      } else {
+        dot.className = "dot red";
+        text.textContent = "Model unavailable";
+        detail.textContent = s.error ?? "";
+      }
+    } catch {
+      document.getElementById("status-text").textContent = "Could not reach server";
+    }
+  }
+
+  async function retrain() {
+    try {
+      await fetch("/api/train", { method: "POST" });
+      showMsg("Retraining started — this may take a minute.", "info");
+      setTimeout(checkStatus, 2000);
+    } catch {
+      showMsg("Failed to start retraining.");
+    }
+  }
+
+  async function getForecast() {
+    const dateVal = document.getElementById("date-input").value;
+    if (!dateVal) { showMsg("Please select a date."); return; }
+
+    hideMsg();
+    document.getElementById("forecast-btn").disabled = true;
+    document.getElementById("results").classList.add("hidden");
+
+    try {
+      const res = await fetch(`/api/forecast?date=${dateVal}`);
+      const data = await res.json();
+      if (!res.ok) { showMsg(data.detail ?? "Forecast failed."); return; }
+      renderForecast(data);
+    } catch {
+      showMsg("Network error — could not reach the server.");
+    } finally {
+      document.getElementById("forecast-btn").disabled = false;
+    }
+  }
+
+  function renderForecast(data) {
+    const isHistorical = data.type === "historical";
+    const s = data.summary;
+
+    document.getElementById("c-peak").innerHTML    = `${s.peak_load ?? "—"}<span class="card-unit"> kW</span>`;
+    document.getElementById("c-min").innerHTML     = `${s.min_load ?? "—"}<span class="card-unit"> kW</span>`;
+    document.getElementById("c-avg").innerHTML     = `${s.avg_load ?? "—"}<span class="card-unit"> kW</span>`;
+    document.getElementById("c-peakhour").textContent = s.peak_hour != null ? fmt12(s.peak_hour) : "—";
+
+    const labels = data.hourly.map(h => fmt12(h.hour));
+    const loads  = data.hourly.map(h => h.load);
+    const temps  = data.hourly.map(h => h.temp_f);
+
+    const barColor = isHistorical
+      ? { bg: "rgba(56, 161, 105, 0.7)", border: "rgba(56, 161, 105, 1)" }   // green
+      : { bg: "rgba(43, 108, 176, 0.7)", border: "rgba(43, 108, 176, 1)" };  // blue
+
+    const typeLabel = isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)";
+    const titleText = isHistorical
+      ? `Historical Report — ${data.date}`
+      : `Load Forecast — ${data.date}`;
+
+    document.getElementById("chart-title").textContent = titleText;
+    document.getElementById("load-col-header").textContent =
+      isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)";
+
+    const tbody = document.getElementById("hourly-tbody");
+    tbody.innerHTML = "";
+    const peakLoad = s.peak_load;
+    data.hourly.forEach(h => {
+      const tr = document.createElement("tr");
+      if (h.load === peakLoad) tr.className = "peak-row";
+      tr.innerHTML = `
+        <td>${fmt12(h.hour)}</td>
+        <td>${h.temp_f != null ? h.temp_f + " °F" : "—"}</td>
+        <td>${h.load != null ? h.load.toLocaleString() : "—"}</td>`;
+      tbody.appendChild(tr);
+    });
+
+    if (chart) chart.destroy();
+    const ctx = document.getElementById("chart").getContext("2d");
+    chart = new Chart(ctx, {
+      data: {
+        labels,
+        datasets: [
+          {
+            type: "bar",
+            label: typeLabel,
+            data: loads,
+            backgroundColor: barColor.bg,
+            borderColor: barColor.border,
+            borderWidth: 1,
+            yAxisID: "yLoad",
+            order: 2,
+          },
+          {
+            type: "line",
+            label: "Temp (°F)",
+            data: temps,
+            borderColor: "#e53e3e",
+            backgroundColor: "rgba(229, 62, 62, 0.1)",
+            borderWidth: 2,
+            pointRadius: 3,
+            tension: 0.4,
+            fill: false,
+            yAxisID: "yTemp",
+            order: 1,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "top" },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.y;
+                return ctx.dataset.label.includes("Load")
+                  ? ` Load: ${v != null ? v.toLocaleString() + " kW" : "n/a"}`
+                  : ` Temp: ${v != null ? v.toFixed(1) + " °F" : "n/a"}`;
+              },
+            },
+          },
+        },
+        scales: {
+          yLoad: {
+            type: "linear",
+            position: "left",
+            title: { display: true, text: "Load (MW)" },
+            beginAtZero: false,
+          },
+          yTemp: {
+            type: "linear",
+            position: "right",
+            title: { display: true, text: "Temperature (°F)" },
+            grid: { drawOnChartArea: false },
+          },
+        },
+      },
+    });
+
+    document.getElementById("results").classList.remove("hidden");
+  }
+
+  checkStatus();
+</script>
+</body>
+</html>
