@@ -5,17 +5,5 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: TENANT_ID
-        sync: false
-      - key: CLIENT_ID
-        sync: false
-      - key: CLIENT_SECRET
-        sync: false
-      - key: SHAREPOINT_HOST
-        sync: false
-      - key: SHAREPOINT_SITE_PATH
-        sync: false
-      - key: SHAREPOINT_FILE_PATH
-        sync: false
-      - key: SHEET_NAME
-        value: Sheet1
+      - key: DATA_CSV_URL
+        value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/load_history.csv
