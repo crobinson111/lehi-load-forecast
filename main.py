@@ -116,17 +116,27 @@ async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool =
         if use_forecast_api
         else "https://archive-api.open-meteo.com/v1/archive"
     )
+    params = {
+        "latitude": LEHI_LAT,
+        "longitude": LEHI_LON,
+        "start_date": start_date,
+        "end_date": end_date,
+        "hourly": "temperature_2m,apparent_temperature",
+        "temperature_unit": "fahrenheit",
+        "timezone": "America/Denver",
+    }
     async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.get(base_url, params={
-            "latitude": LEHI_LAT,
-            "longitude": LEHI_LON,
-            "start_date": start_date,
-            "end_date": end_date,
-            "hourly": "temperature_2m,apparent_temperature",
-            "temperature_unit": "fahrenheit",
-            "timezone": "America/Denver",
-        })
-        resp.raise_for_status()
+        for attempt in range(4):
+            resp = await client.get(base_url, params=params)
+            if resp.status_code == 429:
+                wait = 5 * (attempt + 1)
+                logger.warning(f"Open-Meteo rate limit hit, retrying in {wait}s...")
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            break
+        else:
+            resp.raise_for_status()
 
     result: dict = {}
     data = resp.json()
