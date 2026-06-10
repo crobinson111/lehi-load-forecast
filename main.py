@@ -1,3 +1,4 @@
+import csv
 import io
 import os
 import asyncio
@@ -12,6 +13,7 @@ import pandas as pd
 from datetime import datetime, timedelta, date
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 import holidays as holidays_lib
 from sklearn.linear_model import Ridge
@@ -292,8 +294,20 @@ async def retrain(background_tasks: BackgroundTasks):
     return {"message": "Retraining started."}
 
 
+def _hourly_to_csv(hourly: list) -> Response:
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Hour", "Temp (°F)", "Load (kW)"])
+    for h in hourly:
+        writer.writerow([h["hour"], h["temp_f"], h["load"]])
+    return Response(content=buf.getvalue(), media_type="text/csv")
+
+
 @app.get("/api/forecast")
-async def forecast(target_date: str = Query(..., alias="date", description="YYYY-MM-DD")):
+async def forecast(
+    target_date: str = Query(..., alias="date", description="YYYY-MM-DD"),
+    fmt: str = Query("json", alias="format", description="Response format: json or csv"),
+):
     if model_state["model"] is None:
         detail = (
             "Model is still training, please wait..."
@@ -335,6 +349,8 @@ async def forecast(target_date: str = Query(..., alias="date", description="YYYY
             "min_load": min(loads) if loads else None,
             "avg_load": round(sum(loads) / len(loads), 1) if loads else None,
         }
+        if fmt == "csv":
+            return _hourly_to_csv(hourly)
         return {"date": target_date, "type": "historical", "hourly": hourly, "summary": summary}
 
     # --- Forecast: future or recent date not yet in spreadsheet ---
@@ -373,6 +389,8 @@ async def forecast(target_date: str = Query(..., alias="date", description="YYYY
         "min_load": min(loads) if loads else None,
         "avg_load": round(sum(loads) / len(loads), 1) if loads else None,
     }
+    if fmt == "csv":
+        return _hourly_to_csv(hourly)
     return {"date": target_date, "type": "forecast", "hourly": hourly, "summary": summary}
 
 
