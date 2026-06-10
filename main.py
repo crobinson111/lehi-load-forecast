@@ -13,7 +13,7 @@ import pandas as pd
 from datetime import datetime, timedelta, date
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 import holidays as holidays_lib
 from sklearn.linear_model import Ridge
@@ -392,6 +392,28 @@ async def forecast(
     if fmt == "csv":
         return _hourly_to_csv(hourly)
     return {"date": target_date, "type": "forecast", "hourly": hourly, "summary": summary}
+
+
+@app.get("/")
+async def root(target_date: str = Query(None, alias="date")):
+    if target_date is None:
+        return FileResponse("static/index.html")
+    try:
+        data = await forecast(target_date=target_date, fmt="json")
+    except HTTPException as exc:
+        return HTMLResponse(f"<p>Error: {exc.detail}</p>", status_code=exc.status_code)
+    hourly = data["hourly"]
+    rows = "\n".join(
+        f"  <tr><td>{h['hour']}</td><td>{h['temp_f'] if h['temp_f'] is not None else ''}</td><td>{h['load'] if h['load'] is not None else ''}</td></tr>"
+        for h in hourly
+    )
+    html = (
+        "<!DOCTYPE html><html><body><table>\n"
+        "<tr><th>Hour</th><th>Temp (°F)</th><th>Load (kW)</th></tr>\n"
+        f"{rows}\n"
+        "</table></body></html>"
+    )
+    return HTMLResponse(content=html)
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

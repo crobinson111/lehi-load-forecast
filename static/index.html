@@ -319,6 +319,7 @@
   }
 
   function renderForecast(data) {
+    history.pushState(null, "", `/?date=${data.date}`);
     const isHistorical = data.type === "historical";
     const s = data.summary;
 
