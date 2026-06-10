@@ -227,7 +227,7 @@
       </div>
       <table id="hourly-table">
         <thead>
-          <tr><th>Hour</th><th>Temp (°F)</th><th id="load-col-header">Load (kW)</th></tr>
+          <tr><th>Hour</th><th id="load-col-header">Load (kW)</th><th>Temp (°F)</th></tr>
         </thead>
         <tbody id="hourly-tbody"></tbody>
       </table>
@@ -353,8 +353,8 @@
       if (h.load === peakLoad) tr.className = "peak-row";
       tr.innerHTML = `
         <td>${fmt12(h.hour)}</td>
-        <td>${h.temp_f != null ? h.temp_f + " °F" : "—"}</td>
-        <td>${h.load != null ? h.load.toLocaleString() : "—"}</td>`;
+        <td>${h.load != null ? h.load.toLocaleString() : "—"}</td>
+        <td>${h.temp_f != null ? h.temp_f + " °F" : "—"}</td>`;
       tbody.appendChild(tr);
     });
 
