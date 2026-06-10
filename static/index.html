@@ -225,6 +225,9 @@
       <div id="chart-container">
         <canvas id="chart"></canvas>
       </div>
+      <div style="display:flex; justify-content:flex-end; margin-bottom:.5rem;">
+        <button class="btn-secondary" onclick="copyHourLoad()" id="copy-btn">Copy Hour &amp; Load</button>
+      </div>
       <table id="hourly-table">
         <thead>
           <tr><th>Hour</th><th id="load-col-header">Load (kW)</th><th>Temp (°F)</th></tr>
@@ -424,6 +427,20 @@
     });
 
     document.getElementById("results").classList.remove("hidden");
+  }
+
+  function copyHourLoad() {
+    const rows = document.querySelectorAll('#hourly-tbody tr');
+    const lines = ['Hour\tLoad (kW)'];
+    rows.forEach(row => {
+      const cells = row.querySelectorAll('td');
+      lines.push(cells[0].textContent + '\t' + cells[1].textContent);
+    });
+    navigator.clipboard.writeText(lines.join('\n')).then(() => {
+      const btn = document.getElementById('copy-btn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy Hour & Load', 2000);
+    });
   }
 
   checkStatus();
