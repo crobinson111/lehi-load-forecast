@@ -1,6 +1,7 @@
 import csv
 import io
 import os
+import time
 import asyncio
 import logging
 import shutil
@@ -10,7 +11,8 @@ load_dotenv()
 import numpy as np
 import httpx
 import pandas as pd
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, timezone
+from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -43,6 +45,9 @@ _SCHOOL_OUT: set = _load_school_calendar()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+CAISO_NODE = "ELAP_PACE-APND"
 
 LEHI_LAT = 40.3916
 LEHI_LON = -111.8508
@@ -111,8 +116,17 @@ def load_excel_data() -> pd.DataFrame:
     return df[["date", "hr", "load"]]
 
 
+_weather_cache: dict = {}
+_WEATHER_CACHE_TTL = 1800  # 30 minutes
+
 async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool = False) -> dict:
     """Returns {date_str: {openmeteo_hour_0_to_23: temp_f}}"""
+    cache_key = (start_date, end_date, use_forecast_api)
+    cached = _weather_cache.get(cache_key)
+    if cached and time.monotonic() - cached[0] < _WEATHER_CACHE_TTL:
+        logger.info(f"Weather cache hit for {start_date}–{end_date}")
+        return cached[1]
+
     base_url = (
         "https://api.open-meteo.com/v1/forecast"
         if use_forecast_api
@@ -131,7 +145,7 @@ async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool =
         for attempt in range(4):
             resp = await client.get(base_url, params=params)
             if resp.status_code == 429:
-                wait = 5 * (attempt + 1)
+                wait = 15 * (attempt + 1)
                 logger.warning(f"Open-Meteo rate limit hit, retrying in {wait}s...")
                 await asyncio.sleep(wait)
                 continue
@@ -153,6 +167,7 @@ async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool =
             "temp_f": temp,
             "apparent_f": app if app is not None else temp,
         }
+    _weather_cache[cache_key] = (time.monotonic(), result)
     return result
 
 
@@ -418,6 +433,79 @@ async def root(target_date: str = Query(None, alias="date")):
         "</table></body></html>"
     )
     return HTMLResponse(content=html)
+
+
+@app.get("/api/dam-lmp")
+async def dam_lmp_api(
+    target_date: str = Query(..., alias="date", description="YYYY-MM-DD"),
+):
+    """Fetch DAM LMP from CAISO OASIS for ELAP_PACE-APND."""
+    try:
+        dt = datetime.strptime(target_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format, use YYYY-MM-DD")
+
+    next_dt = dt + timedelta(days=1)
+
+    def to_utc_str(d: datetime) -> str:
+        aware = d.replace(tzinfo=PACIFIC_TZ)
+        return aware.astimezone(timezone.utc).strftime("%Y%m%dT%H:%M-0000")
+
+    params = {
+        "queryname": "PRC_LMP",
+        "market_run_id": "DAM",
+        "startdatetime": to_utc_str(dt),
+        "enddatetime": to_utc_str(next_dt),
+        "version": 1,
+        "node": CAISO_NODE,
+        "resultformat": 6,
+    }
+    caiso_headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept": "application/zip, application/octet-stream, */*",
+    }
+
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        resp = await client.get(
+            "https://oasis.caiso.com/oasisapi/SingleZip",
+            params=params, headers=caiso_headers,
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"CAISO returned HTTP {resp.status_code}")
+    if resp.content[:1] == b"<":
+        snippet = resp.content[:400].decode("utf-8", errors="replace")
+        raise HTTPException(status_code=502, detail=f"CAISO error response: {snippet}")
+
+    try:
+        rows = []
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as z:
+            for name in z.namelist():
+                if name.endswith(".csv"):
+                    with z.open(name) as f:
+                        reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8"))
+                        rows.extend(list(reader))
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=502, detail="CAISO response was not a valid ZIP file")
+
+    lmp_rows = [r for r in rows if r.get("LMP_TYPE") == "LMP"]
+    if not lmp_rows:
+        raise HTTPException(status_code=404, detail=f"No DAM LMP data for {target_date} — may not be published yet")
+
+    result = []
+    for row in lmp_rows:
+        interval_start = row.get("INTERVALSTARTTIME_GMT") or row.get("INTERVAL_START_GMT") or ""
+        if not interval_start:
+            continue
+        try:
+            dt_utc = datetime.strptime(interval_start[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+            dt_pt = dt_utc.astimezone(PACIFIC_TZ)
+            result.append({"hour": dt_pt.hour, "lmp": round(float(row.get("MW", 0)), 4)})
+        except Exception:
+            continue
+
+    result.sort(key=lambda x: x["hour"])
+    return {"date": target_date, "node": CAISO_NODE, "hourly": result}
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
