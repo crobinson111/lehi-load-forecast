@@ -30,7 +30,29 @@
 
     main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
 
-    /* Status bar */
+    /* ── Tabs ── */
+    .tab-nav {
+      display: flex;
+      gap: 0;
+      margin-bottom: 1.5rem;
+      border-bottom: 2px solid #e2e8f0;
+    }
+    .tab-btn {
+      padding: .6rem 1.5rem;
+      background: none;
+      border: none;
+      border-bottom: 3px solid transparent;
+      font-size: .9rem;
+      font-weight: 500;
+      color: #718096;
+      cursor: pointer;
+      margin-bottom: -2px;
+      transition: color .15s;
+    }
+    .tab-btn:hover { color: #2b6cb0; }
+    .tab-btn.active { color: #2b6cb0; border-bottom-color: #2b6cb0; font-weight: 600; }
+
+    /* ── Status bar ── */
     #status-bar {
       display: flex;
       align-items: center;
@@ -43,17 +65,15 @@
       font-size: .85rem;
       flex-wrap: wrap;
     }
-    .dot {
-      width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0;
-    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
     .dot.green  { background: #38a169; }
     .dot.yellow { background: #d69e2e; animation: pulse 1s infinite; }
     .dot.red    { background: #e53e3e; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-    #status-text { font-weight: 500; }
+    #status-text   { font-weight: 500; }
     #status-detail { color: #718096; margin-left: auto; }
 
-    /* Controls */
+    /* ── Controls ── */
     .controls {
       background: white;
       border-radius: 8px;
@@ -86,13 +106,13 @@
       cursor: pointer;
       transition: background .15s, opacity .15s;
     }
-    .btn-primary { background: #2b6cb0; color: white; }
+    .btn-primary   { background: #2b6cb0; color: white; }
     .btn-primary:hover { background: #2c5282; }
     .btn-primary:disabled { opacity: .5; cursor: not-allowed; }
     .btn-secondary { background: #edf2f7; color: #4a5568; font-size: .85rem; }
     .btn-secondary:hover { background: #e2e8f0; }
 
-    /* Summary cards */
+    /* ── Cards ── */
     .cards {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -110,33 +130,29 @@
     .card.min   { border-color: #3182ce; }
     .card.avg   { border-color: #38a169; }
     .card.hour  { border-color: #d69e2e; }
+    .card.lmp   { border-color: #b07800; }
     .card-label { font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #718096; }
     .card-value { font-size: 1.6rem; font-weight: 700; margin-top: .25rem; }
     .card-unit  { font-size: .8rem; color: #a0aec0; margin-left: .2rem; }
 
-    /* Chart */
+    /* ── Chart ── */
     .chart-wrap {
       background: white;
       border-radius: 8px;
       padding: 1.25rem;
       box-shadow: 0 1px 4px rgba(0,0,0,.08);
     }
-    .chart-title {
-      font-size: .9rem;
-      font-weight: 600;
-      color: #4a5568;
-      margin-bottom: 1rem;
-    }
-    #chart-container { position: relative; height: 320px; }
+    .chart-title { font-size: .9rem; font-weight: 600; color: #4a5568; margin-bottom: 1rem; }
+    .chart-container { position: relative; height: 320px; }
 
-    /* Hourly table */
-    #hourly-table {
+    /* ── Tables ── */
+    .data-table {
       width: 100%;
       border-collapse: collapse;
       margin-top: 1.25rem;
       font-size: .875rem;
     }
-    #hourly-table th {
+    .data-table th {
       text-align: left;
       padding: .4rem .75rem;
       background: #f7fafc;
@@ -147,15 +163,16 @@
       text-transform: uppercase;
       letter-spacing: .05em;
     }
-    #hourly-table td {
+    .data-table td {
       padding: .35rem .75rem;
       border-bottom: 1px solid #edf2f7;
       color: #2d3748;
     }
-    #hourly-table tr:last-child td { border-bottom: none; }
-    #hourly-table tr.peak-row td { font-weight: 700; background: #fffaf0; }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr.peak-row td  { font-weight: 700; background: #fffaf0; }
+    .data-table td.lmp-col { font-family: monospace; }
 
-    /* Error / info */
+    /* ── Messages ── */
     .message {
       padding: 1rem 1.25rem;
       border-radius: 8px;
@@ -190,60 +207,179 @@
     <span id="status-detail"></span>
   </div>
 
-  <div class="controls">
-    <div class="field">
-      <label for="date-input">Date</label>
-      <input type="date" id="date-input" />
-    </div>
-    <button class="btn-primary" id="forecast-btn" onclick="getForecast()">Get Report</button>
+  <div class="tab-nav">
+    <button class="tab-btn active" id="tab-btn-forecast"   onclick="switchTab('forecast')">Load Forecast</button>
+    <button class="tab-btn"        id="tab-btn-comparison" onclick="switchTab('comparison')">DAM Comparison</button>
+    <button class="tab-btn"        id="tab-btn-accuracy"   onclick="switchTab('accuracy')">Forecast vs Actuals</button>
   </div>
 
-  <div id="msg" class="hidden message"></div>
-
-  <div id="results" class="hidden">
-    <div class="cards">
-      <div class="card peak">
-        <div class="card-label">Peak Load</div>
-        <div class="card-value" id="c-peak">—<span class="card-unit">MW</span></div>
+  <!-- ══════════════════════ TAB 1: FORECAST ══════════════════════ -->
+  <div id="tab-forecast">
+    <div class="controls">
+      <div class="field">
+        <label for="date-input">Date</label>
+        <input type="date" id="date-input" />
       </div>
-      <div class="card hour">
-        <div class="card-label">Peak Hour</div>
-        <div class="card-value" id="c-peakhour">—</div>
-      </div>
-      <div class="card min">
-        <div class="card-label">Min Load</div>
-        <div class="card-value" id="c-min">—<span class="card-unit">MW</span></div>
-      </div>
-      <div class="card avg">
-        <div class="card-label">Avg Load</div>
-        <div class="card-value" id="c-avg">—<span class="card-unit">MW</span></div>
-      </div>
+      <button class="btn-primary" id="forecast-btn" onclick="getForecast()">Get Report</button>
     </div>
 
-    <div class="chart-wrap">
-      <div class="chart-title" id="chart-title">Hourly Forecast</div>
-      <div id="chart-container">
-        <canvas id="chart"></canvas>
+    <div id="msg" class="hidden message"></div>
+
+    <div id="results" class="hidden">
+      <div class="cards">
+        <div class="card peak">
+          <div class="card-label">Peak Load</div>
+          <div class="card-value" id="c-peak">—<span class="card-unit">kW</span></div>
+        </div>
+        <div class="card hour">
+          <div class="card-label">Peak Hour</div>
+          <div class="card-value" id="c-peakhour">—</div>
+        </div>
+        <div class="card min">
+          <div class="card-label">Min Load</div>
+          <div class="card-value" id="c-min">—<span class="card-unit">kW</span></div>
+        </div>
+        <div class="card avg">
+          <div class="card-label">Avg Load</div>
+          <div class="card-value" id="c-avg">—<span class="card-unit">kW</span></div>
+        </div>
       </div>
-      <div style="display:flex; justify-content:flex-end; margin-bottom:.5rem;">
-        <button class="btn-secondary" onclick="copyHourLoad()" id="copy-btn">Copy Hour &amp; Load</button>
+
+      <div class="chart-wrap">
+        <div class="chart-title" id="chart-title">Hourly Forecast</div>
+        <div class="chart-container"><canvas id="chart"></canvas></div>
+        <div style="display:flex; justify-content:flex-end; margin-bottom:.5rem; margin-top:.75rem;">
+          <button class="btn-secondary" onclick="copyHourLoad()" id="copy-btn">Copy Hour &amp; Load</button>
+        </div>
+        <table class="data-table" id="hourly-table">
+          <thead>
+            <tr><th>Hour</th><th id="load-col-header">Load (kW)</th><th>Temp (°F)</th></tr>
+          </thead>
+          <tbody id="hourly-tbody"></tbody>
+        </table>
       </div>
-      <table id="hourly-table">
-        <thead>
-          <tr><th>Hour</th><th id="load-col-header">Load (kW)</th><th>Temp (°F)</th></tr>
-        </thead>
-        <tbody id="hourly-tbody"></tbody>
-      </table>
     </div>
   </div>
+
+  <!-- ══════════════════════ TAB 2: DAM COMPARISON ══════════════════════ -->
+  <div id="tab-comparison" class="hidden">
+    <div class="controls">
+      <div class="field">
+        <label for="cmp-date-input">Date</label>
+        <input type="date" id="cmp-date-input" />
+      </div>
+      <button class="btn-primary" id="cmp-btn" onclick="getComparison()">Compare</button>
+    </div>
+
+    <div id="cmp-msg" class="hidden message"></div>
+
+    <div id="cmp-results" class="hidden">
+      <div class="cards">
+        <div class="card avg">
+          <div class="card-label">Avg Forecast Load</div>
+          <div class="card-value" id="cmp-avg-load">—<span class="card-unit">kW</span></div>
+        </div>
+        <div class="card peak">
+          <div class="card-label">Peak Forecast Load</div>
+          <div class="card-value" id="cmp-peak-load">—<span class="card-unit">kW</span></div>
+        </div>
+        <div class="card lmp">
+          <div class="card-label">Avg DAM Price</div>
+          <div class="card-value" id="cmp-avg-lmp">—<span class="card-unit">$/MWh</span></div>
+        </div>
+        <div class="card lmp">
+          <div class="card-label">Peak DAM Price</div>
+          <div class="card-value" id="cmp-peak-lmp">—<span class="card-unit">$/MWh</span></div>
+        </div>
+      </div>
+
+      <div class="chart-wrap">
+        <div class="chart-title" id="cmp-chart-title">Forecast Load vs. DAM LMP</div>
+        <div class="chart-container"><canvas id="cmp-chart"></canvas></div>
+        <table class="data-table" style="margin-top:1.25rem">
+          <thead>
+            <tr>
+              <th>Hour</th>
+              <th id="cmp-load-header">Forecast Load (kW)</th>
+              <th>DAM LMP ($/MWh)</th>
+            </tr>
+          </thead>
+          <tbody id="cmp-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ TAB 3: FORECAST vs ACTUALS ══════════════════════ -->
+  <div id="tab-accuracy" class="hidden">
+    <div class="controls">
+      <div class="field">
+        <label for="acc-date-input">Past Date</label>
+        <input type="date" id="acc-date-input" />
+      </div>
+      <button class="btn-primary" id="acc-btn" onclick="getAccuracy()">Compare</button>
+    </div>
+
+    <div id="acc-msg" class="hidden message"></div>
+
+    <div id="acc-results" class="hidden">
+      <div class="cards">
+        <div class="card avg">
+          <div class="card-label">Mean Abs Error</div>
+          <div class="card-value" id="acc-mae">—<span class="card-unit">kW</span></div>
+        </div>
+        <div class="card peak">
+          <div class="card-label">Mean Abs % Error</div>
+          <div class="card-value" id="acc-mape">—<span class="card-unit">%</span></div>
+        </div>
+        <div class="card peak">
+          <div class="card-label">Actual Peak</div>
+          <div class="card-value" id="acc-actual-peak">—<span class="card-unit">kW</span></div>
+        </div>
+        <div class="card min">
+          <div class="card-label">Forecast Peak</div>
+          <div class="card-value" id="acc-forecast-peak">—<span class="card-unit">kW</span></div>
+        </div>
+      </div>
+
+      <div class="chart-wrap">
+        <div class="chart-title" id="acc-chart-title">Forecast vs Actuals</div>
+        <div class="chart-container"><canvas id="acc-chart"></canvas></div>
+        <table class="data-table" style="margin-top:1.25rem">
+          <thead>
+            <tr><th>Hour</th><th>Actual (kW)</th><th>Forecast (kW)</th><th>Diff (kW)</th><th>Diff %</th></tr>
+          </thead>
+          <tbody id="acc-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <script>
-  let chart = null;
+  let chart    = null;
+  let cmpChart = null;
+  let accChart = null;
 
-  // Default to today
   const today = new Date();
-  document.getElementById("date-input").value = today.toISOString().slice(0, 10);
+  const todayStr = today.toISOString().slice(0, 10);
+  const yesterdayStr = new Date(today - 86400000).toISOString().slice(0, 10);
+  document.getElementById("date-input").value     = todayStr;
+  document.getElementById("cmp-date-input").value = todayStr;
+  document.getElementById("acc-date-input").value = yesterdayStr;
+  document.getElementById("acc-date-input").max   = yesterdayStr;
+
+  // ── Tabs ──────────────────────────────────────────────────────────────
+
+  function switchTab(name) {
+    ["forecast", "comparison", "accuracy"].forEach(t => {
+      document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
+      document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
+    });
+  }
+
+  // ── Utilities ─────────────────────────────────────────────────────────
 
   function fmt12(hr) {
     if (hr === 0)  return "12 AM";
@@ -252,23 +388,14 @@
     return `${hr - 12} PM`;
   }
 
-  function showMsg(text, type = "error") {
-    const el = document.getElementById("msg");
-    el.textContent = text;
-    el.className = `message ${type}`;
-    el.classList.remove("hidden");
-  }
-
-  function hideMsg() {
-    document.getElementById("msg").classList.add("hidden");
-  }
+  // ── Status ────────────────────────────────────────────────────────────
 
   async function checkStatus() {
     try {
       const res = await fetch("/api/status");
       const s = await res.json();
-      const dot  = document.getElementById("status-dot");
-      const text = document.getElementById("status-text");
+      const dot    = document.getElementById("status-dot");
+      const text   = document.getElementById("status-text");
       const detail = document.getElementById("status-detail");
 
       if (s.training) {
@@ -301,16 +428,24 @@
     }
   }
 
+  // ── Tab 1: Forecast ───────────────────────────────────────────────────
+
+  function showMsg(text, type = "error") {
+    const el = document.getElementById("msg");
+    el.textContent = text;
+    el.className = `message ${type}`;
+    el.classList.remove("hidden");
+  }
+  function hideMsg() { document.getElementById("msg").classList.add("hidden"); }
+
   async function getForecast() {
     const dateVal = document.getElementById("date-input").value;
     if (!dateVal) { showMsg("Please select a date."); return; }
-
     hideMsg();
     document.getElementById("forecast-btn").disabled = true;
     document.getElementById("results").classList.add("hidden");
-
     try {
-      const res = await fetch(`/api/forecast?date=${dateVal}`);
+      const res  = await fetch(`/api/forecast?date=${dateVal}`);
       const data = await res.json();
       if (!res.ok) { showMsg(data.detail ?? "Forecast failed."); return; }
       renderForecast(data);
@@ -336,24 +471,19 @@
     const temps  = data.hourly.map(h => h.temp_f);
 
     const barColor = isHistorical
-      ? { bg: "rgba(56, 161, 105, 0.7)", border: "rgba(56, 161, 105, 1)" }   // green
-      : { bg: "rgba(43, 108, 176, 0.7)", border: "rgba(43, 108, 176, 1)" };  // blue
+      ? { bg: "rgba(56,161,105,0.7)", border: "rgba(56,161,105,1)" }
+      : { bg: "rgba(43,108,176,0.7)", border: "rgba(43,108,176,1)" };
 
     const typeLabel = isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)";
-    const titleText = isHistorical
-      ? `Historical Report — ${data.date}`
-      : `Load Forecast — ${data.date}`;
-
-    document.getElementById("chart-title").textContent = titleText;
-    document.getElementById("load-col-header").textContent =
-      isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)";
+    document.getElementById("chart-title").textContent =
+      isHistorical ? `Historical Report — ${data.date}` : `Load Forecast — ${data.date}`;
+    document.getElementById("load-col-header").textContent = isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)";
 
     const tbody = document.getElementById("hourly-tbody");
     tbody.innerHTML = "";
-    const peakLoad = s.peak_load;
     data.hourly.forEach(h => {
       const tr = document.createElement("tr");
-      if (h.load === peakLoad) tr.className = "peak-row";
+      if (h.load === s.peak_load) tr.className = "peak-row";
       tr.innerHTML = `
         <td>${fmt12(h.hour)}</td>
         <td>${h.load != null ? h.load.toLocaleString() : "—"}</td>
@@ -362,66 +492,29 @@
     });
 
     if (chart) chart.destroy();
-    const ctx = document.getElementById("chart").getContext("2d");
-    chart = new Chart(ctx, {
+    chart = new Chart(document.getElementById("chart").getContext("2d"), {
       data: {
         labels,
         datasets: [
-          {
-            type: "bar",
-            label: typeLabel,
-            data: loads,
-            backgroundColor: barColor.bg,
-            borderColor: barColor.border,
-            borderWidth: 1,
-            yAxisID: "yLoad",
-            order: 2,
-          },
-          {
-            type: "line",
-            label: "Temp (°F)",
-            data: temps,
-            borderColor: "#e53e3e",
-            backgroundColor: "rgba(229, 62, 62, 0.1)",
-            borderWidth: 2,
-            pointRadius: 3,
-            tension: 0.4,
-            fill: false,
-            yAxisID: "yTemp",
-            order: 1,
-          },
+          { type: "bar",  label: typeLabel,    data: loads, backgroundColor: barColor.bg, borderColor: barColor.border, borderWidth: 1, yAxisID: "yLoad", order: 2 },
+          { type: "line", label: "Temp (°F)",  data: temps, borderColor: "#e53e3e", backgroundColor: "rgba(229,62,62,.1)", borderWidth: 2, pointRadius: 3, tension: 0.4, fill: false, yAxisID: "yTemp", order: 1 },
         ],
       },
       options: {
-        responsive: true,
-        maintainAspectRatio: false,
+        responsive: true, maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
         plugins: {
           legend: { position: "top" },
-          tooltip: {
-            callbacks: {
-              label: ctx => {
-                const v = ctx.parsed.y;
-                return ctx.dataset.label.includes("Load")
-                  ? ` Load: ${v != null ? v.toLocaleString() + " kW" : "n/a"}`
-                  : ` Temp: ${v != null ? v.toFixed(1) + " °F" : "n/a"}`;
-              },
-            },
-          },
+          tooltip: { callbacks: { label: ctx => {
+            const v = ctx.parsed.y;
+            return ctx.dataset.label.includes("Load")
+              ? ` Load: ${v != null ? v.toLocaleString() + " kW" : "n/a"}`
+              : ` Temp: ${v != null ? v.toFixed(1) + " °F" : "n/a"}`;
+          }}},
         },
         scales: {
-          yLoad: {
-            type: "linear",
-            position: "left",
-            title: { display: true, text: "Load (MW)" },
-            beginAtZero: false,
-          },
-          yTemp: {
-            type: "linear",
-            position: "right",
-            title: { display: true, text: "Temperature (°F)" },
-            grid: { drawOnChartArea: false },
-          },
+          yLoad: { type: "linear", position: "left",  title: { display: true, text: "Load (kW)" }, beginAtZero: false },
+          yTemp: { type: "linear", position: "right", title: { display: true, text: "Temperature (°F)" }, grid: { drawOnChartArea: false } },
         },
       },
     });
@@ -443,6 +536,230 @@
     });
   }
 
+  // ── Tab 2: DAM Comparison ─────────────────────────────────────────────
+
+  function showCmpMsg(text, type = "error") {
+    const el = document.getElementById("cmp-msg");
+    el.textContent = text;
+    el.className = `message ${type}`;
+    el.classList.remove("hidden");
+  }
+  function hideCmpMsg() { document.getElementById("cmp-msg").classList.add("hidden"); }
+
+  async function getComparison() {
+    const dateVal = document.getElementById("cmp-date-input").value;
+    if (!dateVal) { showCmpMsg("Please select a date."); return; }
+    hideCmpMsg();
+    document.getElementById("cmp-btn").disabled = true;
+    document.getElementById("cmp-results").classList.add("hidden");
+
+    showCmpMsg("Fetching forecast and DAM prices…", "info");
+
+    try {
+      const [forecastRes, lmpRes] = await Promise.all([
+        fetch(`/api/forecast?date=${dateVal}`),
+        fetch(`/api/dam-lmp?date=${dateVal}`),
+      ]);
+
+      const forecastData = await forecastRes.json();
+      const lmpData      = await lmpRes.json();
+
+      if (!forecastRes.ok) { showCmpMsg(forecastData.detail ?? "Forecast failed."); return; }
+
+      const lmpByHour = {};
+      if (lmpRes.ok && lmpData.hourly) {
+        lmpData.hourly.forEach(h => { lmpByHour[h.hour] = h.lmp; });
+      }
+
+      const lmpError = !lmpRes.ok
+        ? (lmpData.detail ?? "DAM prices unavailable")
+        : null;
+
+      hideCmpMsg();
+      if (lmpError) showCmpMsg(`Note: ${lmpError}`, "info");
+
+      renderComparison(dateVal, forecastData, lmpByHour);
+    } catch (e) {
+      showCmpMsg("Network error: " + e.message);
+    } finally {
+      document.getElementById("cmp-btn").disabled = false;
+    }
+  }
+
+  function renderComparison(dateVal, forecastData, lmpByHour) {
+    const isHistorical = forecastData.type === "historical";
+    const loadLabel = isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)";
+
+    document.getElementById("cmp-chart-title").textContent =
+      `${isHistorical ? "Actual" : "Forecast"} Load vs. DAM LMP — ${dateVal}`;
+    document.getElementById("cmp-load-header").textContent = loadLabel;
+
+    const hours  = forecastData.hourly.map(h => h.hour);
+    const labels = hours.map(fmt12);
+    const loads  = forecastData.hourly.map(h => h.load);
+    const lmps   = hours.map(h => lmpByHour[h] ?? null);
+
+    // Summary cards
+    const validLoads = loads.filter(v => v != null);
+    const validLmps  = lmps.filter(v => v != null);
+    const avgLoad = validLoads.length ? Math.round(validLoads.reduce((a,b)=>a+b,0)/validLoads.length) : null;
+    const peakLoad = validLoads.length ? Math.max(...validLoads) : null;
+    const avgLmp  = validLmps.length  ? (validLmps.reduce((a,b)=>a+b,0)/validLmps.length).toFixed(2) : null;
+    const peakLmp = validLmps.length  ? Math.max(...validLmps).toFixed(2) : null;
+
+    document.getElementById("cmp-avg-load").innerHTML  = `${avgLoad  != null ? avgLoad.toLocaleString()  : "—"}<span class="card-unit"> kW</span>`;
+    document.getElementById("cmp-peak-load").innerHTML = `${peakLoad != null ? peakLoad.toLocaleString() : "—"}<span class="card-unit"> kW</span>`;
+    document.getElementById("cmp-avg-lmp").innerHTML   = `${avgLmp   ?? "—"}<span class="card-unit"> $/MWh</span>`;
+    document.getElementById("cmp-peak-lmp").innerHTML  = `${peakLmp  ?? "—"}<span class="card-unit"> $/MWh</span>`;
+
+    // Table
+    const tbody = document.getElementById("cmp-tbody");
+    tbody.innerHTML = "";
+    hours.forEach((h, i) => {
+      const tr = document.createElement("tr");
+      if (loads[i] === peakLoad) tr.className = "peak-row";
+      tr.innerHTML = `
+        <td>${fmt12(h)}</td>
+        <td>${loads[i] != null ? loads[i].toLocaleString() : "—"}</td>
+        <td class="lmp-col">${lmps[i] != null ? "$" + lmps[i].toFixed(4) : "—"}</td>`;
+      tbody.appendChild(tr);
+    });
+
+    // Chart
+    if (cmpChart) cmpChart.destroy();
+    const barColor = isHistorical
+      ? { bg: "rgba(56,161,105,0.7)", border: "rgba(56,161,105,1)" }
+      : { bg: "rgba(43,108,176,0.7)", border: "rgba(43,108,176,1)" };
+
+    cmpChart = new Chart(document.getElementById("cmp-chart").getContext("2d"), {
+      data: {
+        labels,
+        datasets: [
+          {
+            type: "bar",
+            label: loadLabel,
+            data: loads,
+            backgroundColor: barColor.bg,
+            borderColor: barColor.border,
+            borderWidth: 1,
+            yAxisID: "yLoad",
+            order: 2,
+          },
+          {
+            type: "line",
+            label: "DAM LMP ($/MWh)",
+            data: lmps,
+            borderColor: "#b07800",
+            backgroundColor: "rgba(176,120,0,0.1)",
+            borderWidth: 2.5,
+            pointRadius: 4,
+            pointBackgroundColor: "#b07800",
+            tension: 0.3,
+            fill: false,
+            yAxisID: "yLmp",
+            order: 1,
+            spanGaps: false,
+          },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "top" },
+          tooltip: { callbacks: { label: ctx => {
+            const v = ctx.parsed.y;
+            if (ctx.dataset.label.includes("LMP"))
+              return ` DAM LMP: ${v != null ? "$" + v.toFixed(4) + " /MWh" : "n/a"}`;
+            return ` Load: ${v != null ? v.toLocaleString() + " kW" : "n/a"}`;
+          }}},
+        },
+        scales: {
+          yLoad: { type: "linear", position: "left",  title: { display: true, text: "Load (kW)" }, beginAtZero: false },
+          yLmp:  { type: "linear", position: "right", title: { display: true, text: "DAM LMP ($/MWh)" }, grid: { drawOnChartArea: false }, beginAtZero: false },
+        },
+      },
+    });
+
+    document.getElementById("cmp-results").classList.remove("hidden");
+  }
+
+  // ── Tab 3: Forecast vs Actuals ────────────────────────────────────────
+
+  function showAccMsg(text, type = "error") {
+    const el = document.getElementById("acc-msg");
+    el.textContent = text; el.className = `message ${type}`; el.classList.remove("hidden");
+  }
+  function hideAccMsg() { document.getElementById("acc-msg").classList.add("hidden"); }
+
+  async function getAccuracy() {
+    const dateVal = document.getElementById("acc-date-input").value;
+    if (!dateVal) { showAccMsg("Please select a date."); return; }
+    hideAccMsg();
+    document.getElementById("acc-btn").disabled = true;
+    document.getElementById("acc-results").classList.add("hidden");
+    showAccMsg("Fetching actuals and running forecast…", "info");
+    try {
+      const res  = await fetch(`/api/accuracy?date=${dateVal}`);
+      const data = await res.json();
+      if (!res.ok) { showAccMsg(data.detail ?? "Failed."); return; }
+      hideAccMsg();
+      renderAccuracy(data);
+    } catch (e) {
+      showAccMsg("Network error: " + e.message);
+    } finally {
+      document.getElementById("acc-btn").disabled = false;
+    }
+  }
+
+  function renderAccuracy(data) {
+    const m = data.metrics;
+    document.getElementById("acc-chart-title").textContent = `Forecast vs Actuals — ${data.date}`;
+    document.getElementById("acc-mae").innerHTML           = `${m.mae ?? "—"}<span class="card-unit"> kW</span>`;
+    document.getElementById("acc-mape").innerHTML          = `${m.mape ?? "—"}<span class="card-unit"> %</span>`;
+    document.getElementById("acc-actual-peak").innerHTML   = `${m.actual_peak?.toLocaleString() ?? "—"}<span class="card-unit"> kW</span>`;
+    document.getElementById("acc-forecast-peak").innerHTML = `${m.forecast_peak?.toLocaleString() ?? "—"}<span class="card-unit"> kW</span>`;
+
+    const labels    = data.hourly.map(h => fmt12(h.hour));
+    const actuals   = data.hourly.map(h => h.actual);
+    const forecasts = data.hourly.map(h => h.forecast);
+
+    const tbody = document.getElementById("acc-tbody");
+    tbody.innerHTML = "";
+    data.hourly.forEach(h => {
+      const tr = document.createElement("tr");
+      if (h.actual === m.actual_peak) tr.className = "peak-row";
+      const diffColor = h.diff == null ? "" : h.diff > 0 ? "color:#276749" : "color:#c53030";
+      tr.innerHTML = `
+        <td>${fmt12(h.hour)}</td>
+        <td>${h.actual   != null ? h.actual.toLocaleString()   : "—"}</td>
+        <td>${h.forecast != null ? h.forecast.toLocaleString() : "—"}</td>
+        <td style="${diffColor}">${h.diff != null ? (h.diff > 0 ? "+" : "") + h.diff.toLocaleString() : "—"}</td>
+        <td style="${diffColor}">${h.diff_pct != null ? (h.diff_pct > 0 ? "+" : "") + h.diff_pct + "%" : "—"}</td>`;
+      tbody.appendChild(tr);
+    });
+
+    if (accChart) accChart.destroy();
+    accChart = new Chart(document.getElementById("acc-chart").getContext("2d"), {
+      data: {
+        labels,
+        datasets: [
+          { type: "bar", label: "Actual (kW)",   data: actuals,   backgroundColor: "rgba(56,161,105,0.7)",  borderColor: "rgba(56,161,105,1)",  borderWidth: 1, yAxisID: "y", order: 2 },
+          { type: "bar", label: "Forecast (kW)", data: forecasts, backgroundColor: "rgba(43,108,176,0.55)", borderColor: "rgba(43,108,176,1)",  borderWidth: 1, yAxisID: "y", order: 1 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { position: "top" } },
+        scales: { y: { title: { display: true, text: "Load (kW)" }, beginAtZero: false } },
+      },
+    });
+
+    document.getElementById("acc-results").classList.remove("hidden");
+  }
+
+  // ── Init ──────────────────────────────────────────────────────────────
   checkStatus();
 </script>
 </body>

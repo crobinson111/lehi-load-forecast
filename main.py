@@ -409,6 +409,59 @@ async def forecast(
     return {"date": target_date, "type": "forecast", "hourly": hourly, "summary": summary}
 
 
+@app.get("/api/accuracy")
+async def accuracy(target_date: str = Query(..., alias="date", description="YYYY-MM-DD past date")):
+    if model_state["model"] is None:
+        detail = "Model is still training, please wait..." if model_state["training"] else f"Model not ready: {model_state['error']}"
+        raise HTTPException(status_code=503, detail=detail)
+    try:
+        datetime.strptime(target_date, "%Y-%m-%d")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    if target_date not in model_state["history"]:
+        raise HTTPException(status_code=404, detail=f"No recorded actuals for {target_date}. Choose a date that is already in the load history.")
+
+    day_hist = model_state["history"][target_date]
+    try:
+        weather = await fetch_weather(target_date, target_date, use_forecast_api=False)
+        day_temps = weather.get(target_date, {})
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Weather API error: {exc}")
+
+    mdl = model_state["model"]
+    hourly = []
+    for om_hour in range(24):
+        actual = day_hist.get(om_hour)
+        wx = day_temps.get(om_hour)
+        forecast_val = None
+        if wx is not None:
+            pred = mdl.predict(build_features(om_hour + 1, wx["temp_f"], wx["apparent_f"], target_date))[0]
+            forecast_val = round(float(max(pred, 0)), 1)
+        diff     = round(actual - forecast_val, 1)       if actual is not None and forecast_val is not None else None
+        diff_pct = round((actual - forecast_val) / actual * 100, 1) if actual and forecast_val else None
+        hourly.append({"hour": om_hour, "temp_f": round(wx["temp_f"], 1) if wx else None,
+                        "actual": actual, "forecast": forecast_val, "diff": diff, "diff_pct": diff_pct})
+
+    paired = [(h["actual"], h["forecast"]) for h in hourly if h["actual"] is not None and h["forecast"] is not None]
+    mae  = round(sum(abs(a - f) for a, f in paired) / len(paired), 1) if paired else None
+    mape = round(sum(abs(a - f) / a * 100 for a, f in paired if a) / len(paired), 2) if paired else None
+    actuals   = [h["actual"]   for h in hourly if h["actual"]   is not None]
+    forecasts = [h["forecast"] for h in hourly if h["forecast"] is not None]
+    actual_peak   = max(actuals)   if actuals   else None
+    forecast_peak = max(forecasts) if forecasts else None
+    return {
+        "date": target_date,
+        "hourly": hourly,
+        "metrics": {
+            "mae": mae, "mape": mape,
+            "actual_peak": actual_peak,
+            "actual_peak_hour": next((h["hour"] for h in hourly if h["actual"] == actual_peak), None),
+            "forecast_peak": forecast_peak,
+            "forecast_peak_hour": next((h["hour"] for h in hourly if h["forecast"] == forecast_peak), None),
+        },
+    }
+
+
 @app.get("/")
 async def root(target_date: str = Query(None, alias="date")):
     if target_date is None:
