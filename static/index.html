@@ -208,9 +208,8 @@
   </div>
 
   <div class="tab-nav">
-    <button class="tab-btn active" id="tab-btn-forecast"   onclick="switchTab('forecast')">Load Forecast</button>
-    <button class="tab-btn"        id="tab-btn-comparison" onclick="switchTab('comparison')">DAM Comparison</button>
-    <button class="tab-btn"        id="tab-btn-accuracy"   onclick="switchTab('accuracy')">Forecast vs Actuals</button>
+    <button class="tab-btn active" id="tab-btn-forecast"  onclick="switchTab('forecast')">Load Forecast</button>
+    <button class="tab-btn"        id="tab-btn-accuracy"  onclick="switchTab('accuracy')">Forecast vs Actuals</button>
   </div>
 
   <!-- ══════════════════════ TAB 1: FORECAST ══════════════════════ -->
@@ -261,54 +260,6 @@
     </div>
   </div>
 
-  <!-- ══════════════════════ TAB 2: DAM COMPARISON ══════════════════════ -->
-  <div id="tab-comparison" class="hidden">
-    <div class="controls">
-      <div class="field">
-        <label for="cmp-date-input">Date</label>
-        <input type="date" id="cmp-date-input" />
-      </div>
-      <button class="btn-primary" id="cmp-btn" onclick="getComparison()">Compare</button>
-    </div>
-
-    <div id="cmp-msg" class="hidden message"></div>
-
-    <div id="cmp-results" class="hidden">
-      <div class="cards">
-        <div class="card avg">
-          <div class="card-label">Avg Forecast Load</div>
-          <div class="card-value" id="cmp-avg-load">—<span class="card-unit">kW</span></div>
-        </div>
-        <div class="card peak">
-          <div class="card-label">Peak Forecast Load</div>
-          <div class="card-value" id="cmp-peak-load">—<span class="card-unit">kW</span></div>
-        </div>
-        <div class="card lmp">
-          <div class="card-label">Avg DAM Price</div>
-          <div class="card-value" id="cmp-avg-lmp">—<span class="card-unit">$/MWh</span></div>
-        </div>
-        <div class="card lmp">
-          <div class="card-label">Peak DAM Price</div>
-          <div class="card-value" id="cmp-peak-lmp">—<span class="card-unit">$/MWh</span></div>
-        </div>
-      </div>
-
-      <div class="chart-wrap">
-        <div class="chart-title" id="cmp-chart-title">Forecast Load vs. DAM LMP</div>
-        <div class="chart-container"><canvas id="cmp-chart"></canvas></div>
-        <table class="data-table" style="margin-top:1.25rem">
-          <thead>
-            <tr>
-              <th>Hour</th>
-              <th id="cmp-load-header">Forecast Load (kW)</th>
-              <th>DAM LMP ($/MWh)</th>
-            </tr>
-          </thead>
-          <tbody id="cmp-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
 
   <!-- ══════════════════════ TAB 3: FORECAST vs ACTUALS ══════════════════════ -->
   <div id="tab-accuracy" class="hidden">
@@ -359,21 +310,19 @@
 
 <script>
   let chart    = null;
-  let cmpChart = null;
   let accChart = null;
 
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
   const yesterdayStr = new Date(today - 86400000).toISOString().slice(0, 10);
   document.getElementById("date-input").value     = todayStr;
-  document.getElementById("cmp-date-input").value = todayStr;
   document.getElementById("acc-date-input").value = yesterdayStr;
   document.getElementById("acc-date-input").max   = yesterdayStr;
 
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["forecast", "comparison", "accuracy"].forEach(t => {
+    ["forecast", "accuracy"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -536,155 +485,7 @@
     });
   }
 
-  // ── Tab 2: DAM Comparison ─────────────────────────────────────────────
-
-  function showCmpMsg(text, type = "error") {
-    const el = document.getElementById("cmp-msg");
-    el.textContent = text;
-    el.className = `message ${type}`;
-    el.classList.remove("hidden");
-  }
-  function hideCmpMsg() { document.getElementById("cmp-msg").classList.add("hidden"); }
-
-  async function getComparison() {
-    const dateVal = document.getElementById("cmp-date-input").value;
-    if (!dateVal) { showCmpMsg("Please select a date."); return; }
-    hideCmpMsg();
-    document.getElementById("cmp-btn").disabled = true;
-    document.getElementById("cmp-results").classList.add("hidden");
-
-    showCmpMsg("Fetching forecast and DAM prices…", "info");
-
-    try {
-      const [forecastRes, lmpRes] = await Promise.all([
-        fetch(`/api/forecast?date=${dateVal}`),
-        fetch(`/api/dam-lmp?date=${dateVal}`),
-      ]);
-
-      const forecastData = await forecastRes.json();
-      const lmpData      = await lmpRes.json();
-
-      if (!forecastRes.ok) { showCmpMsg(forecastData.detail ?? "Forecast failed."); return; }
-
-      const lmpByHour = {};
-      if (lmpRes.ok && lmpData.hourly) {
-        lmpData.hourly.forEach(h => { lmpByHour[h.hour] = h.lmp; });
-      }
-
-      const lmpError = !lmpRes.ok
-        ? (lmpData.detail ?? "DAM prices unavailable")
-        : null;
-
-      hideCmpMsg();
-      if (lmpError) showCmpMsg(`Note: ${lmpError}`, "info");
-
-      renderComparison(dateVal, forecastData, lmpByHour);
-    } catch (e) {
-      showCmpMsg("Network error: " + e.message);
-    } finally {
-      document.getElementById("cmp-btn").disabled = false;
-    }
-  }
-
-  function renderComparison(dateVal, forecastData, lmpByHour) {
-    const isHistorical = forecastData.type === "historical";
-    const loadLabel = isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)";
-
-    document.getElementById("cmp-chart-title").textContent =
-      `${isHistorical ? "Actual" : "Forecast"} Load vs. DAM LMP — ${dateVal}`;
-    document.getElementById("cmp-load-header").textContent = loadLabel;
-
-    const hours  = forecastData.hourly.map(h => h.hour);
-    const labels = hours.map(fmt12);
-    const loads  = forecastData.hourly.map(h => h.load);
-    const lmps   = hours.map(h => lmpByHour[h] ?? null);
-
-    // Summary cards
-    const validLoads = loads.filter(v => v != null);
-    const validLmps  = lmps.filter(v => v != null);
-    const avgLoad = validLoads.length ? Math.round(validLoads.reduce((a,b)=>a+b,0)/validLoads.length) : null;
-    const peakLoad = validLoads.length ? Math.max(...validLoads) : null;
-    const avgLmp  = validLmps.length  ? (validLmps.reduce((a,b)=>a+b,0)/validLmps.length).toFixed(2) : null;
-    const peakLmp = validLmps.length  ? Math.max(...validLmps).toFixed(2) : null;
-
-    document.getElementById("cmp-avg-load").innerHTML  = `${avgLoad  != null ? avgLoad.toLocaleString()  : "—"}<span class="card-unit"> kW</span>`;
-    document.getElementById("cmp-peak-load").innerHTML = `${peakLoad != null ? peakLoad.toLocaleString() : "—"}<span class="card-unit"> kW</span>`;
-    document.getElementById("cmp-avg-lmp").innerHTML   = `${avgLmp   ?? "—"}<span class="card-unit"> $/MWh</span>`;
-    document.getElementById("cmp-peak-lmp").innerHTML  = `${peakLmp  ?? "—"}<span class="card-unit"> $/MWh</span>`;
-
-    // Table
-    const tbody = document.getElementById("cmp-tbody");
-    tbody.innerHTML = "";
-    hours.forEach((h, i) => {
-      const tr = document.createElement("tr");
-      if (loads[i] === peakLoad) tr.className = "peak-row";
-      tr.innerHTML = `
-        <td>${fmt12(h)}</td>
-        <td>${loads[i] != null ? loads[i].toLocaleString() : "—"}</td>
-        <td class="lmp-col">${lmps[i] != null ? "$" + lmps[i].toFixed(4) : "—"}</td>`;
-      tbody.appendChild(tr);
-    });
-
-    // Chart
-    if (cmpChart) cmpChart.destroy();
-    const barColor = isHistorical
-      ? { bg: "rgba(56,161,105,0.7)", border: "rgba(56,161,105,1)" }
-      : { bg: "rgba(43,108,176,0.7)", border: "rgba(43,108,176,1)" };
-
-    cmpChart = new Chart(document.getElementById("cmp-chart").getContext("2d"), {
-      data: {
-        labels,
-        datasets: [
-          {
-            type: "bar",
-            label: loadLabel,
-            data: loads,
-            backgroundColor: barColor.bg,
-            borderColor: barColor.border,
-            borderWidth: 1,
-            yAxisID: "yLoad",
-            order: 2,
-          },
-          {
-            type: "line",
-            label: "DAM LMP ($/MWh)",
-            data: lmps,
-            borderColor: "#b07800",
-            backgroundColor: "rgba(176,120,0,0.1)",
-            borderWidth: 2.5,
-            pointRadius: 4,
-            pointBackgroundColor: "#b07800",
-            tension: 0.3,
-            fill: false,
-            yAxisID: "yLmp",
-            order: 1,
-            spanGaps: false,
-          },
-        ],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        plugins: {
-          legend: { position: "top" },
-          tooltip: { callbacks: { label: ctx => {
-            const v = ctx.parsed.y;
-            if (ctx.dataset.label.includes("LMP"))
-              return ` DAM LMP: ${v != null ? "$" + v.toFixed(4) + " /MWh" : "n/a"}`;
-            return ` Load: ${v != null ? v.toLocaleString() + " kW" : "n/a"}`;
-          }}},
-        },
-        scales: {
-          yLoad: { type: "linear", position: "left",  title: { display: true, text: "Load (kW)" }, beginAtZero: false },
-          yLmp:  { type: "linear", position: "right", title: { display: true, text: "DAM LMP ($/MWh)" }, grid: { drawOnChartArea: false }, beginAtZero: false },
-        },
-      },
-    });
-
-    document.getElementById("cmp-results").classList.remove("hidden");
-  }
-
-  // ── Tab 3: Forecast vs Actuals ────────────────────────────────────────
+  // ── Tab 2: Forecast vs Actuals ────────────────────────────────────────
 
   function showAccMsg(text, type = "error") {
     const el = document.getElementById("acc-msg");
