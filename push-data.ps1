@@ -32,14 +32,16 @@ if (-not (Test-Path $dataDir)) {
     New-Item -ItemType Directory -Path $dataDir | Out-Null
 }
 
-$outputCsv = Join-Path $dataDir "load_history.csv"
+$outputCsv      = Join-Path $dataDir "load_history.csv"
+$outputSolarCsv = Join-Path $dataDir "red_mesa_history.csv"
 
 $pythonScript = @'
 import sys, os, shutil, tempfile
 import pandas as pd
 
-excel_path = sys.argv[1]
-output_path = sys.argv[2]
+excel_path       = sys.argv[1]
+output_load      = sys.argv[2]
+output_solar     = sys.argv[3]
 
 try:
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
@@ -55,30 +57,48 @@ finally:
     os.unlink(tmp.name)
 
 df.columns = df.columns.str.strip()
+
+# --- Load history ---
 required = {"Date", "Hr", "Total Meters plus Gens"}
 missing = required - set(df.columns)
 if missing:
     print(f"ERROR: Missing columns: {missing}", file=sys.stderr)
     sys.exit(1)
 
-df = df.dropna(subset=list(required))
-df["date"] = (
-    df["Date"].astype(int).astype(str).str.zfill(6)
+df_load = df.dropna(subset=list(required)).copy()
+df_load["date"] = (
+    df_load["Date"].astype(int).astype(str).str.zfill(6)
     .pipe(lambda s: pd.to_datetime(s, format="%y%m%d"))
     .dt.strftime("%Y-%m-%d")
 )
-df["hr"] = df["Hr"].astype(int)
-df["load"] = pd.to_numeric(df["Total Meters plus Gens"], errors="coerce")
-df = df[(df["hr"] >= 1) & (df["hr"] <= 24) & (df["load"] > 0)].dropna(subset=["load"])
+df_load["hr"]   = df_load["Hr"].astype(int)
+df_load["load"] = pd.to_numeric(df_load["Total Meters plus Gens"], errors="coerce")
+df_load = df_load[(df_load["hr"] >= 1) & (df_load["hr"] <= 24) & (df_load["load"] > 0)].dropna(subset=["load"])
+df_load[["date", "hr", "load"]].to_csv(output_load, index=False)
+print(f"Wrote {len(df_load)} load rows to {output_load}")
 
-df[["date", "hr", "load"]].to_csv(output_path, index=False)
-print(f"Wrote {len(df)} rows to {output_path}")
+# --- Red Mesa solar history ---
+if "RED MESA" not in df.columns:
+    print("WARNING: RED MESA column not found — skipping solar export", file=sys.stderr)
+    sys.exit(0)
+
+df_solar = df.dropna(subset=["Date", "Hr"]).copy()
+df_solar["date"] = (
+    df_solar["Date"].astype(int).astype(str).str.zfill(6)
+    .pipe(lambda s: pd.to_datetime(s, format="%y%m%d"))
+    .dt.strftime("%Y-%m-%d")
+)
+df_solar["hr"]  = df_solar["Hr"].astype(int)
+df_solar["kwh"] = pd.to_numeric(df_solar["RED MESA"], errors="coerce").fillna(0)
+df_solar = df_solar[(df_solar["hr"] >= 1) & (df_solar["hr"] <= 24)]
+df_solar[["date", "hr", "kwh"]].to_csv(output_solar, index=False)
+print(f"Wrote {len(df_solar)} solar rows to {output_solar}")
 '@
 
 $tmpScript = [System.IO.Path]::GetTempFileName() + ".py"
 try {
     Set-Content -Path $tmpScript -Value $pythonScript -Encoding utf8
-    python $tmpScript $excelPath $outputCsv
+    python $tmpScript $excelPath $outputCsv $outputSolarCsv
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Python export failed."
         exit 1
@@ -87,16 +107,16 @@ try {
     if (Test-Path $tmpScript) { Remove-Item $tmpScript }
 }
 
-Write-Host "Data exported successfully to $outputCsv"
+Write-Host "Data exported successfully."
 
 # Git operations
 $today = Get-Date -Format "yyyy-MM-dd"
 Push-Location $PSScriptRoot
 try {
-    git add data/load_history.csv
+    git add data/load_history.csv data/red_mesa_history.csv
     if ($LASTEXITCODE -ne 0) { throw "git add failed." }
 
-    git commit -m "Update load data $today"
+    git commit -m "Update load + Red Mesa data $today"
     if ($LASTEXITCODE -ne 0) { throw "git commit failed." }
 
     git push

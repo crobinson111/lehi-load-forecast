@@ -49,8 +49,11 @@ logger = logging.getLogger(__name__)
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 CAISO_NODE = "ELAP_PACE-APND"
 
-LEHI_LAT = 40.3916
-LEHI_LON = -111.8508
+LEHI_LAT  = 40.3916
+LEHI_LON  = -111.8508
+BLUFF_LAT = 37.2879   # Red Mesa solar plant — Bluff, UT
+BLUFF_LON = -109.5512
+
 EXCEL_PATH = os.environ.get(
     "EXCEL_PATH",
     r"C:\Users\crobinson\OneDrive - Lehi City\Scheduling - Documents\SchLogData.xlsx",
@@ -66,6 +69,53 @@ model_state: dict = {
     "training": False,
     "error": None,
 }
+
+solar_model_state: dict = {
+    "model": None,
+    "history": {},      # {date_str: {om_hour_0_23: kwh}}
+    "trained_at": None,
+    "record_count": 0,
+    "date_range": None,
+    "r2": None,
+    "training": False,
+    "error": None,
+}
+
+
+def load_red_mesa_data() -> pd.DataFrame:
+    url = os.environ.get("RED_MESA_CSV_URL")
+    if url:
+        resp = httpx.get(url, timeout=30.0)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text))
+        df["date"] = df["date"].astype(str)
+        df["hr"]   = df["hr"].astype(int)
+        df["kwh"]  = pd.to_numeric(df["kwh"], errors="coerce").fillna(0)
+        return df[["date", "hr", "kwh"]]
+
+    try:
+        tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+        tmp.close()
+        shutil.copy2(EXCEL_PATH, tmp.name)
+    except Exception as exc:
+        raise RuntimeError(f"Could not copy spreadsheet: {exc}")
+
+    try:
+        df = pd.read_excel(tmp.name, sheet_name="Sch Log Data (2)", engine="openpyxl")
+    finally:
+        os.unlink(tmp.name)
+
+    df.columns = df.columns.str.strip()
+    df = df.dropna(subset=["Date", "Hr"])
+    df["date"] = (
+        df["Date"].astype(int).astype(str).str.zfill(6)
+        .pipe(lambda s: pd.to_datetime(s, format="%y%m%d"))
+        .dt.strftime("%Y-%m-%d")
+    )
+    df["hr"]  = df["Hr"].astype(int)
+    df["kwh"] = pd.to_numeric(df["RED MESA"], errors="coerce").fillna(0)
+    df = df[(df["hr"] >= 1) & (df["hr"] <= 24)]
+    return df[["date", "hr", "kwh"]]
 
 
 def load_excel_data() -> pd.DataFrame:
@@ -169,6 +219,137 @@ async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool =
         }
     _weather_cache[cache_key] = (time.monotonic(), result)
     return result
+
+
+async def fetch_solar_weather(start_date: str, end_date: str, use_forecast_api: bool = False) -> dict:
+    """Returns {date_str: {hour_0_23: {"ghi": float, "temp_f": float}}} for Bluff, UT."""
+    cache_key = ("solar", start_date, end_date, use_forecast_api)
+    cached = _weather_cache.get(cache_key)
+    if cached and time.monotonic() - cached[0] < _WEATHER_CACHE_TTL:
+        return cached[1]
+
+    base_url = (
+        "https://api.open-meteo.com/v1/forecast"
+        if use_forecast_api
+        else "https://archive-api.open-meteo.com/v1/archive"
+    )
+    params = {
+        "latitude": BLUFF_LAT,
+        "longitude": BLUFF_LON,
+        "start_date": start_date,
+        "end_date": end_date,
+        "hourly": "shortwave_radiation,temperature_2m",
+        "temperature_unit": "fahrenheit",
+        "timezone": "America/Denver",
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for attempt in range(4):
+            resp = await client.get(base_url, params=params)
+            if resp.status_code == 429:
+                wait = 15 * (attempt + 1)
+                logger.warning(f"Open-Meteo rate limit (solar), retrying in {wait}s...")
+                await asyncio.sleep(wait)
+                continue
+            resp.raise_for_status()
+            break
+        else:
+            resp.raise_for_status()
+
+    result: dict = {}
+    data = resp.json()
+    times = data["hourly"]["time"]
+    ghis  = data["hourly"]["shortwave_radiation"]
+    temps = data["hourly"]["temperature_2m"]
+    for t, ghi, temp in zip(times, ghis, temps):
+        if ghi is None:
+            continue
+        dt = datetime.fromisoformat(t)
+        result.setdefault(dt.strftime("%Y-%m-%d"), {})[dt.hour] = {
+            "ghi": ghi,
+            "temp_f": temp if temp is not None else 70.0,
+        }
+    _weather_cache[cache_key] = (time.monotonic(), result)
+    return result
+
+
+def build_solar_features(hr_1_to_24: int, ghi: float, temp_f: float, date_str: str) -> np.ndarray:
+    angle   = 2 * np.pi * hr_1_to_24 / 24
+    sin_hr  = np.sin(angle);     cos_hr  = np.cos(angle)
+    sin_hr2 = np.sin(2*angle);   cos_hr2 = np.cos(2*angle)
+
+    d   = datetime.strptime(date_str, "%Y-%m-%d").date()
+    doy = d.timetuple().tm_yday
+    sin_doy = np.sin(2*np.pi*doy/365.25)
+    cos_doy = np.cos(2*np.pi*doy/365.25)
+
+    return np.array([[
+        ghi, ghi**2,
+        ghi * sin_doy, ghi * cos_doy,  # seasonal efficiency variation
+        sin_hr, cos_hr,
+        sin_hr2, cos_hr2,
+        sin_doy, cos_doy,
+        temp_f,
+    ]])
+
+
+SOLAR_TRAINING_YEARS = 3
+
+
+async def train_solar_model() -> None:
+    solar_model_state["training"] = True
+    solar_model_state["error"]    = None
+    try:
+        logger.info("Loading Red Mesa data...")
+        df = load_red_mesa_data()
+        df = df[df["kwh"] >= 0]
+
+        cutoff = (pd.to_datetime(df["date"].max()) - pd.DateOffset(years=SOLAR_TRAINING_YEARS)).strftime("%Y-%m-%d")
+        train_df = df[df["date"] >= cutoff].copy()
+        logger.info(f"Red Mesa training on {len(train_df)} rows from {train_df['date'].min()} to {train_df['date'].max()}")
+
+        logger.info("Fetching solar weather for Bluff, UT...")
+        weather = await fetch_solar_weather(train_df["date"].min(), train_df["date"].max())
+
+        train_df["om_hour"] = train_df["hr"] - 1
+        train_df["ghi"]    = train_df.apply(lambda r: (weather.get(r["date"], {}).get(r["om_hour"]) or {}).get("ghi"),    axis=1)
+        train_df["temp_f"] = train_df.apply(lambda r: (weather.get(r["date"], {}).get(r["om_hour"]) or {}).get("temp_f"), axis=1)
+        train_df = train_df.dropna(subset=["ghi", "temp_f"])
+
+        # Only train on daytime hours where solar is meaningful
+        train_df = train_df[train_df["ghi"] > 10]
+
+        if len(train_df) < 24:
+            raise RuntimeError(f"Only {len(train_df)} daytime rows after joining weather data.")
+
+        X = np.vstack(train_df.apply(
+            lambda r: build_solar_features(r["hr"], r["ghi"], r["temp_f"], r["date"])[0], axis=1
+        ).values)
+        y = train_df["kwh"].values
+
+        mdl = Pipeline([("scaler", StandardScaler()), ("ridge", Ridge(alpha=10.0))])
+        mdl.fit(X, y)
+        r2 = float(mdl.score(X, y))
+
+        history: dict = {}
+        for _, row in df.iterrows():
+            om_hour = int(row["hr"]) - 1
+            history.setdefault(row["date"], {})[om_hour] = round(float(row["kwh"]), 1)
+
+        solar_model_state.update({
+            "model": mdl,
+            "history": history,
+            "trained_at": datetime.now().isoformat(timespec="seconds"),
+            "record_count": int(len(y)),
+            "date_range": [train_df["date"].min(), train_df["date"].max()],
+            "r2": round(r2, 3),
+        })
+        logger.info(f"Solar model ready — {len(y):,} daytime samples, R²={r2:.3f}")
+
+    except Exception as exc:
+        logger.error(f"Solar training failed: {exc}")
+        solar_model_state["error"] = str(exc)
+    finally:
+        solar_model_state["training"] = False
 
 
 TRAINING_YEARS = 2  # only use this many recent years for fitting
@@ -282,6 +463,7 @@ async def train_model() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(train_model())
+    asyncio.create_task(train_solar_model())
     yield
 
 
@@ -315,6 +497,15 @@ def _hourly_to_csv(hourly: list) -> Response:
     writer.writerow(["Hour", "Temp (°F)", "Load (kW)"])
     for h in hourly:
         writer.writerow([h["hour"], h["temp_f"], h["load"]])
+    return Response(content=buf.getvalue(), media_type="text/csv")
+
+
+def _solar_to_csv(hourly: list) -> Response:
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["Hour", "GHI (W/m²)", "Generation (kWh)"])
+    for h in hourly:
+        writer.writerow([h["hour"], h["ghi"], h["kwh"]])
     return Response(content=buf.getvalue(), media_type="text/csv")
 
 
@@ -460,6 +651,100 @@ async def accuracy(target_date: str = Query(..., alias="date", description="YYYY
             "forecast_peak_hour": next((h["hour"] for h in hourly if h["forecast"] == forecast_peak), None),
         },
     }
+
+
+@app.get("/api/solar/status")
+async def solar_status():
+    s = solar_model_state
+    return {
+        "ready": s["model"] is not None,
+        "training": s["training"],
+        "error": s["error"],
+        "trained_at": s["trained_at"],
+        "record_count": s["record_count"],
+        "date_range": s["date_range"],
+        "r2": s["r2"],
+    }
+
+
+@app.post("/api/solar/train")
+async def solar_train_endpoint(background_tasks: BackgroundTasks):
+    if solar_model_state["training"]:
+        raise HTTPException(status_code=409, detail="Solar model is already training.")
+    background_tasks.add_task(train_solar_model)
+    return {"message": "Solar model training started."}
+
+
+@app.get("/api/solar/forecast")
+async def solar_forecast(
+    target_date: str = Query(..., alias="date", description="YYYY-MM-DD"),
+    fmt: str = Query("json", alias="format"),
+):
+    if solar_model_state["model"] is None:
+        detail = ("Solar model is still training..." if solar_model_state["training"]
+                  else f"Solar model not ready: {solar_model_state['error']}")
+        raise HTTPException(status_code=503, detail=detail)
+    try:
+        dt = datetime.strptime(target_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    if dt > date.today() + timedelta(days=16):
+        raise HTTPException(status_code=400, detail="Open-Meteo only forecasts up to 16 days ahead.")
+
+    if target_date in solar_model_state["history"]:
+        day_hist = solar_model_state["history"][target_date]
+        try:
+            weather = await fetch_solar_weather(target_date, target_date, use_forecast_api=False)
+            day_wx = weather.get(target_date, {})
+        except Exception:
+            day_wx = {}
+        hourly = []
+        for om_hour in range(24):
+            kwh = day_hist.get(om_hour, 0.0)
+            wx = day_wx.get(om_hour)
+            hourly.append({"hour": om_hour, "ghi": round(wx["ghi"], 1) if wx else None, "kwh": kwh})
+        kwhs = [h["kwh"] for h in hourly if h["kwh"] is not None]
+        peak = max(kwhs) if kwhs else None
+        summary = {
+            "peak_kwh": peak,
+            "peak_hour": next((h["hour"] for h in hourly if h["kwh"] == peak), None) if peak else None,
+            "total_kwh": round(sum(kwhs), 1) if kwhs else None,
+        }
+        if fmt == "csv":
+            return _solar_to_csv(hourly)
+        return {"date": target_date, "type": "historical", "hourly": hourly, "summary": summary}
+
+    use_forecast_api = dt >= date.today() - timedelta(days=7)
+    try:
+        weather = await fetch_solar_weather(target_date, target_date, use_forecast_api=use_forecast_api)
+        day_wx = weather.get(target_date, {})
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Solar weather API error: {exc}")
+
+    if not day_wx:
+        raise HTTPException(status_code=404, detail=f"No solar weather data for {target_date}.")
+
+    mdl = solar_model_state["model"]
+    hourly = []
+    for om_hour in range(24):
+        hr_1_24 = om_hour + 1
+        wx = day_wx.get(om_hour)
+        if wx is None or wx["ghi"] <= 10:
+            hourly.append({"hour": om_hour, "ghi": round(wx["ghi"], 1) if wx else None, "kwh": 0.0})
+            continue
+        pred = float(max(mdl.predict(build_solar_features(hr_1_24, wx["ghi"], wx["temp_f"], target_date))[0], 0))
+        hourly.append({"hour": om_hour, "ghi": round(wx["ghi"], 1), "kwh": round(pred, 1)})
+
+    kwhs = [h["kwh"] for h in hourly]
+    peak = max(kwhs) if kwhs else None
+    summary = {
+        "peak_kwh": peak,
+        "peak_hour": next((h["hour"] for h in hourly if h["kwh"] == peak), None),
+        "total_kwh": round(sum(kwhs), 1),
+    }
+    if fmt == "csv":
+        return _solar_to_csv(hourly)
+    return {"date": target_date, "type": "forecast", "hourly": hourly, "summary": summary}
 
 
 @app.get("/")

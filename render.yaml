@@ -7,3 +7,5 @@ services:
     envVars:
       - key: DATA_CSV_URL
         value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/load_history.csv
+      - key: RED_MESA_CSV_URL
+        value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/red_mesa_history.csv

@@ -210,6 +210,7 @@
   <div class="tab-nav">
     <button class="tab-btn active" id="tab-btn-forecast"  onclick="switchTab('forecast')">Load Forecast</button>
     <button class="tab-btn"        id="tab-btn-accuracy"  onclick="switchTab('accuracy')">Forecast vs Actuals</button>
+    <button class="tab-btn"        id="tab-btn-solar"     onclick="switchTab('solar')">Red Mesa Solar</button>
   </div>
 
   <!-- ══════════════════════ TAB 1: FORECAST ══════════════════════ -->
@@ -261,7 +262,7 @@
   </div>
 
 
-  <!-- ══════════════════════ TAB 3: FORECAST vs ACTUALS ══════════════════════ -->
+  <!-- ══════════════════════ TAB 2: FORECAST vs ACTUALS ══════════════════════ -->
   <div id="tab-accuracy" class="hidden">
     <div class="controls">
       <div class="field">
@@ -306,23 +307,66 @@
     </div>
   </div>
 
+  <!-- ══════════════════════ TAB 3: RED MESA SOLAR ══════════════════════ -->
+  <div id="tab-solar" class="hidden">
+    <div class="controls">
+      <div class="field">
+        <label for="solar-date-input">Date</label>
+        <input type="date" id="solar-date-input" />
+      </div>
+      <button class="btn-primary" id="solar-btn" onclick="getSolarForecast()">Get Solar Forecast</button>
+    </div>
+
+    <div id="solar-msg" class="hidden message"></div>
+
+    <div id="solar-results" class="hidden">
+      <div class="cards">
+        <div class="card avg">
+          <div class="card-label">Total Generation</div>
+          <div class="card-value" id="solar-total">—<span class="card-unit">kWh</span></div>
+        </div>
+        <div class="card peak">
+          <div class="card-label">Peak Hour</div>
+          <div class="card-value" id="solar-peakhour">—</div>
+        </div>
+        <div class="card hour">
+          <div class="card-label">Peak Generation</div>
+          <div class="card-value" id="solar-peak">—<span class="card-unit">kWh</span></div>
+        </div>
+      </div>
+
+      <div class="chart-wrap">
+        <div class="chart-title" id="solar-chart-title">Red Mesa Solar Generation</div>
+        <div class="chart-container"><canvas id="solar-chart"></canvas></div>
+        <table class="data-table" style="margin-top:1.25rem">
+          <thead>
+            <tr><th>Hour</th><th>GHI (W/m²)</th><th id="solar-kwh-header">Generation (kWh)</th></tr>
+          </thead>
+          <tbody id="solar-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <script>
-  let chart    = null;
-  let accChart = null;
+  let chart      = null;
+  let accChart   = null;
+  let solarChart = null;
 
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
   const yesterdayStr = new Date(today - 86400000).toISOString().slice(0, 10);
-  document.getElementById("date-input").value     = todayStr;
-  document.getElementById("acc-date-input").value = yesterdayStr;
-  document.getElementById("acc-date-input").max   = yesterdayStr;
+  document.getElementById("date-input").value       = todayStr;
+  document.getElementById("acc-date-input").value   = yesterdayStr;
+  document.getElementById("acc-date-input").max     = yesterdayStr;
+  document.getElementById("solar-date-input").value = todayStr;
 
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["forecast", "accuracy"].forEach(t => {
+    ["forecast", "accuracy", "solar"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -558,6 +602,103 @@
     });
 
     document.getElementById("acc-results").classList.remove("hidden");
+  }
+
+  // ── Tab 3: Red Mesa Solar ─────────────────────────────────────────────
+
+  function showSolarMsg(text, type = "error") {
+    const el = document.getElementById("solar-msg");
+    el.textContent = text; el.className = `message ${type}`; el.classList.remove("hidden");
+  }
+  function hideSolarMsg() { document.getElementById("solar-msg").classList.add("hidden"); }
+
+  async function getSolarForecast() {
+    const dateVal = document.getElementById("solar-date-input").value;
+    if (!dateVal) { showSolarMsg("Please select a date."); return; }
+    hideSolarMsg();
+    document.getElementById("solar-btn").disabled = true;
+    document.getElementById("solar-results").classList.add("hidden");
+    showSolarMsg("Fetching solar forecast…", "info");
+    try {
+      const res  = await fetch(`/api/solar/forecast?date=${dateVal}`);
+      const data = await res.json();
+      if (!res.ok) { showSolarMsg(data.detail ?? "Solar forecast failed."); return; }
+      hideSolarMsg();
+      renderSolar(data);
+    } catch (e) {
+      showSolarMsg("Network error: " + e.message);
+    } finally {
+      document.getElementById("solar-btn").disabled = false;
+    }
+  }
+
+  function renderSolar(data) {
+    const isHistorical = data.type === "historical";
+    const s = data.summary;
+
+    document.getElementById("solar-chart-title").textContent =
+      isHistorical ? `Red Mesa Historical — ${data.date}` : `Red Mesa Forecast — ${data.date}`;
+    document.getElementById("solar-kwh-header").textContent =
+      isHistorical ? "Actual (kWh)" : "Forecast (kWh)";
+    document.getElementById("solar-total").innerHTML =
+      `${s.total_kwh != null ? s.total_kwh.toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
+    document.getElementById("solar-peak").innerHTML =
+      `${s.peak_kwh != null ? s.peak_kwh.toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
+    document.getElementById("solar-peakhour").textContent =
+      s.peak_hour != null ? fmt12(s.peak_hour) : "—";
+
+    const labels = data.hourly.map(h => fmt12(h.hour));
+    const kwhs   = data.hourly.map(h => h.kwh ?? 0);
+    const ghis   = data.hourly.map(h => h.ghi);
+
+    const barColor = isHistorical
+      ? { bg: "rgba(214,158,46,0.7)", border: "rgba(214,158,46,1)" }
+      : { bg: "rgba(237,137,54,0.7)", border: "rgba(237,137,54,1)" };
+
+    const tbody = document.getElementById("solar-tbody");
+    tbody.innerHTML = "";
+    data.hourly.forEach(h => {
+      const tr = document.createElement("tr");
+      if (h.kwh === s.peak_kwh && s.peak_kwh > 0) tr.className = "peak-row";
+      tr.innerHTML = `
+        <td>${fmt12(h.hour)}</td>
+        <td>${h.ghi != null ? h.ghi.toLocaleString() : "—"}</td>
+        <td>${h.kwh != null ? h.kwh.toLocaleString() : "—"}</td>`;
+      tbody.appendChild(tr);
+    });
+
+    if (solarChart) solarChart.destroy();
+    solarChart = new Chart(document.getElementById("solar-chart").getContext("2d"), {
+      data: {
+        labels,
+        datasets: [
+          { type: "bar",  label: isHistorical ? "Actual (kWh)" : "Forecast (kWh)",
+            data: kwhs, backgroundColor: barColor.bg, borderColor: barColor.border, borderWidth: 1, yAxisID: "yKwh", order: 2 },
+          { type: "line", label: "GHI (W/m²)",
+            data: ghis, borderColor: "#a0aec0", backgroundColor: "rgba(160,174,192,.1)",
+            borderWidth: 1.5, pointRadius: 2, tension: 0.4, fill: false, yAxisID: "yGhi", order: 1 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "top" },
+          tooltip: { callbacks: { label: ctx => {
+            const v = ctx.parsed.y;
+            return ctx.dataset.label.includes("GHI")
+              ? ` GHI: ${v != null ? v.toFixed(0) + " W/m²" : "n/a"}`
+              : ` Gen: ${v != null ? v.toLocaleString() + " kWh" : "n/a"}`;
+          }}},
+        },
+        scales: {
+          yKwh: { type: "linear", position: "left",  title: { display: true, text: "Generation (kWh)" }, beginAtZero: true },
+          yGhi: { type: "linear", position: "right", title: { display: true, text: "GHI (W/m²)" }, beginAtZero: true, grid: { drawOnChartArea: false } },
+        },
+      },
+    });
+
+    document.getElementById("solar-results").classList.remove("hidden");
   }
 
   // ── Init ──────────────────────────────────────────────────────────────
