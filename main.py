@@ -460,10 +460,15 @@ async def train_model() -> None:
         model_state["training"] = False
 
 
+async def _train_solar_delayed() -> None:
+    await asyncio.sleep(90)   # let load model finish its weather fetch first
+    await train_solar_model()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(train_model())
-    asyncio.create_task(train_solar_model())
+    asyncio.create_task(_train_solar_delayed())
     yield
 
 
