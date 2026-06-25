@@ -59,6 +59,27 @@ EXCEL_PATH = os.environ.get(
     r"C:\Users\crobinson\OneDrive - Lehi City\Scheduling - Documents\SchLogData.xlsx",
 )
 
+
+def _load_weather_csv(url_env_key: str) -> dict:
+    """Load pre-fetched training weather from a CSV URL. Returns {} if not configured."""
+    url = os.environ.get(url_env_key)
+    if not url:
+        return {}
+    try:
+        resp = httpx.get(url, timeout=30.0)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text))
+        result: dict = {}
+        for _, row in df.iterrows():
+            om_hour = int(row["hr"]) - 1  # hr 1-24 → 0-23
+            entry = {k: float(row[k]) for k in df.columns if k not in ("date", "hr")}
+            result.setdefault(str(row["date"]), {})[om_hour] = entry
+        logger.info(f"Loaded training weather from {url_env_key}: {len(df)} rows")
+        return result
+    except Exception as exc:
+        logger.warning(f"Could not load training weather CSV ({url_env_key}): {exc}")
+        return {}
+
 model_state: dict = {
     "model": None,
     "history": {},      # {date_str: {om_hour_0_23: load}}
@@ -317,8 +338,12 @@ async def train_solar_model() -> None:
         train_df = df[df["date"] >= cutoff].copy()
         logger.info(f"Red Mesa training on {len(train_df)} rows from {train_df['date'].min()} to {train_df['date'].max()}")
 
-        logger.info("Fetching solar weather for Bluff, UT...")
-        weather = await fetch_solar_weather(train_df["date"].min(), train_df["date"].max())
+        weather = _load_weather_csv("SOLAR_WEATHER_CSV_URL")
+        if not weather:
+            logger.info("Fetching solar weather for Bluff, UT...")
+            weather = await fetch_solar_weather(train_df["date"].min(), train_df["date"].max())
+        else:
+            logger.info("Using pre-loaded solar training weather (no API call needed)")
 
         train_df["om_hour"] = train_df["hr"] - 1
         train_df["ghi"]    = train_df.apply(lambda r: (weather.get(r["date"], {}).get(r["om_hour"]) or {}).get("ghi"),    axis=1)
@@ -427,8 +452,12 @@ async def train_model() -> None:
         train_df = df[df["date"] >= cutoff].copy()
         logger.info(f"Training on {len(train_df)} rows from {train_df['date'].min()} to {train_df['date'].max()}")
 
-        logger.info("Fetching historical weather from Open-Meteo...")
-        weather = await fetch_weather(train_df["date"].min(), train_df["date"].max())
+        weather = _load_weather_csv("LOAD_WEATHER_CSV_URL")
+        if not weather:
+            logger.info("Fetching historical weather from Open-Meteo...")
+            weather = await fetch_weather(train_df["date"].min(), train_df["date"].max())
+        else:
+            logger.info("Using pre-loaded training weather (no API call needed)")
 
         # Spreadsheet hr 1–24 maps to Open-Meteo hour 0–23 (hr - 1)
         train_df["om_hour"] = train_df["hr"] - 1

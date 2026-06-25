@@ -9,3 +9,7 @@ services:
         value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/load_history.csv
       - key: RED_MESA_CSV_URL
         value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/red_mesa_history.csv
+      - key: LOAD_WEATHER_CSV_URL
+        value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/load_weather.csv
+      - key: SOLAR_WEATHER_CSV_URL
+        value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/solar_weather.csv

@@ -1,55 +1,16 @@
-# push-data.ps1 — export Excel data + training weather to CSV and push to GitHub
-
-# Read EXCEL_PATH from .env
-$envFile = Join-Path $PSScriptRoot ".env"
-if (-not (Test-Path $envFile)) {
-    Write-Error ".env file not found at $envFile"
-    exit 1
-}
-
-$excelPath = $null
-Get-Content $envFile | ForEach-Object {
-    if ($_ -match "^EXCEL_PATH=(.+)$") {
-        $excelPath = $matches[1].Trim()
-    }
-}
-
-if (-not $excelPath) {
-    Write-Error "EXCEL_PATH not set in .env"
-    exit 1
-}
-
-if (-not (Test-Path $excelPath)) {
-    Write-Error "Excel file not found: $excelPath"
-    exit 1
-}
-
-Write-Host "Reading Excel data from: $excelPath"
-
-# Ensure data/ directory exists
-$dataDir = Join-Path $PSScriptRoot "data"
-if (-not (Test-Path $dataDir)) {
-    New-Item -ItemType Directory -Path $dataDir | Out-Null
-}
-
-$outputCsv         = Join-Path $dataDir "load_history.csv"
-$outputSolarCsv    = Join-Path $dataDir "red_mesa_history.csv"
-$outputLoadWx      = Join-Path $dataDir "load_weather.csv"
-$outputSolarWx     = Join-Path $dataDir "solar_weather.csv"
-
-$pythonScript = @'
 import sys, os, shutil, tempfile, json, time
-import urllib.request, urllib.parse
+import urllib.request
+import urllib.parse
 import pandas as pd
 from datetime import datetime
 
-excel_path       = sys.argv[1]
-output_load      = sys.argv[2]
-output_solar     = sys.argv[3]
-output_load_wx   = sys.argv[4]
-output_solar_wx  = sys.argv[5]
+excel_path      = sys.argv[1]
+output_load     = sys.argv[2]
+output_solar    = sys.argv[3]
+output_load_wx  = sys.argv[4]
+output_solar_wx = sys.argv[5]
 
-# ── Excel export ────────────────────────────────────────────────────────────
+# ── Excel export ─────────────────────────────────────────────────────────────
 try:
     tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
     tmp.close()
@@ -99,7 +60,7 @@ df_solar = df_solar[(df_solar["hr"] >= 1) & (df_solar["hr"] <= 24)]
 df_solar[["date", "hr", "kwh"]].to_csv(output_solar, index=False)
 print(f"Wrote {len(df_solar)} solar rows to {output_solar}")
 
-# ── Fetch training weather from Open-Meteo (runs on your machine, not Render) ──
+# ── Fetch training weather (runs on local machine — your IP, not Render's) ───
 
 def fetch_archive(lat, lon, start, end, variables):
     params = {
@@ -110,6 +71,7 @@ def fetch_archive(lat, lon, start, end, variables):
         "timezone": "America/Denver",
     }
     url = "https://archive-api.open-meteo.com/v1/archive?" + urllib.parse.urlencode(params)
+    print(f"  GET {url[:80]}...")
     for attempt in range(4):
         try:
             with urllib.request.urlopen(url, timeout=120) as r:
@@ -117,7 +79,7 @@ def fetch_archive(lat, lon, start, end, variables):
         except Exception as exc:
             if attempt < 3:
                 wait = 15 * (attempt + 1)
-                print(f"  Retrying in {wait}s... ({exc})")
+                print(f"  Error: {exc}. Retrying in {wait}s...")
                 time.sleep(wait)
             else:
                 raise
@@ -125,13 +87,13 @@ def fetch_archive(lat, lon, start, end, variables):
 # Load weather — last 2 years for Lehi, UT
 load_end   = df_load["date"].max()
 load_start = (pd.to_datetime(load_end) - pd.DateOffset(years=2)).strftime("%Y-%m-%d")
-print(f"Fetching load weather {load_start} to {load_end} for Lehi, UT...")
+print(f"\nFetching load weather {load_start} to {load_end} for Lehi, UT...")
 wx = fetch_archive(40.3916, -111.8508, load_start, load_end,
                    ["temperature_2m", "apparent_temperature"])
 rows = []
 for t, temp, app in zip(wx["hourly"]["time"],
-                         wx["hourly"]["temperature_2m"],
-                         wx["hourly"]["apparent_temperature"]):
+                        wx["hourly"]["temperature_2m"],
+                        wx["hourly"]["apparent_temperature"]):
     if temp is None:
         continue
     dt = datetime.fromisoformat(t)
@@ -144,18 +106,18 @@ for t, temp, app in zip(wx["hourly"]["time"],
 pd.DataFrame(rows).to_csv(output_load_wx, index=False)
 print(f"Wrote {len(rows)} load weather rows to {output_load_wx}")
 
-time.sleep(5)  # brief pause between API calls
+time.sleep(5)
 
 # Solar weather — last 3 years for Bluff, UT
 solar_end   = df_solar["date"].max()
 solar_start = (pd.to_datetime(solar_end) - pd.DateOffset(years=3)).strftime("%Y-%m-%d")
-print(f"Fetching solar weather {solar_start} to {solar_end} for Bluff, UT...")
+print(f"\nFetching solar weather {solar_start} to {solar_end} for Bluff, UT...")
 wx_s = fetch_archive(37.2879, -109.5512, solar_start, solar_end,
                      ["shortwave_radiation", "temperature_2m"])
 rows_s = []
 for t, ghi, temp in zip(wx_s["hourly"]["time"],
-                         wx_s["hourly"]["shortwave_radiation"],
-                         wx_s["hourly"]["temperature_2m"]):
+                        wx_s["hourly"]["shortwave_radiation"],
+                        wx_s["hourly"]["temperature_2m"]):
     if ghi is None:
         continue
     dt = datetime.fromisoformat(t)
@@ -167,35 +129,5 @@ for t, ghi, temp in zip(wx_s["hourly"]["time"],
     })
 pd.DataFrame(rows_s).to_csv(output_solar_wx, index=False)
 print(f"Wrote {len(rows_s)} solar weather rows to {output_solar_wx}")
-'@
 
-$tmpScript = Join-Path $env:TEMP "push_data_export.py"
-Set-Content -Path $tmpScript -Value $pythonScript -Encoding utf8
-python $tmpScript $excelPath $outputCsv $outputSolarCsv $outputLoadWx $outputSolarWx
-if ($LASTEXITCODE -ne 0) {
-    Write-Error "Python export failed."
-    exit 1
-}
-
-Write-Host "All data exported successfully."
-
-# Git operations
-$today = Get-Date -Format "yyyy-MM-dd"
-Push-Location $PSScriptRoot
-try {
-    git add data/load_history.csv data/red_mesa_history.csv data/load_weather.csv data/solar_weather.csv
-    if ($LASTEXITCODE -ne 0) { throw "git add failed." }
-
-    git commit -m "Update load, solar, and weather data $today"
-    if ($LASTEXITCODE -ne 0) { throw "git commit failed." }
-
-    git push
-    if ($LASTEXITCODE -ne 0) { throw "git push failed." }
-
-    Write-Host "Successfully pushed data update for $today."
-} catch {
-    Write-Error $_.Exception.Message
-    exit 1
-} finally {
-    Pop-Location
-}
+print("\nDone.")
