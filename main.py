@@ -168,6 +168,14 @@ def load_excel_data() -> pd.DataFrame:
 
 _weather_cache: dict = {}
 _WEATHER_CACHE_TTL = 1800  # 30 minutes
+_openmeteo_semaphore: asyncio.Semaphore | None = None  # created after event loop starts
+
+
+def _get_openmeteo_sem() -> asyncio.Semaphore:
+    global _openmeteo_semaphore
+    if _openmeteo_semaphore is None:
+        _openmeteo_semaphore = asyncio.Semaphore(1)
+    return _openmeteo_semaphore
 
 async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool = False) -> dict:
     """Returns {date_str: {openmeteo_hour_0_to_23: temp_f}}"""
@@ -191,18 +199,19 @@ async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool =
         "temperature_unit": "fahrenheit",
         "timezone": "America/Denver",
     }
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        for attempt in range(4):
-            resp = await client.get(base_url, params=params)
-            if resp.status_code == 429:
-                wait = 15 * (attempt + 1)
-                logger.warning(f"Open-Meteo rate limit hit, retrying in {wait}s...")
-                await asyncio.sleep(wait)
-                continue
-            resp.raise_for_status()
-            break
-        else:
-            resp.raise_for_status()
+    async with _get_openmeteo_sem():
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            for attempt in range(6):
+                resp = await client.get(base_url, params=params)
+                if resp.status_code == 429:
+                    wait = 20 * (attempt + 1)
+                    logger.warning(f"Open-Meteo rate limit hit, retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                break
+            else:
+                resp.raise_for_status()
 
     result: dict = {}
     data = resp.json()
@@ -242,18 +251,19 @@ async def fetch_solar_weather(start_date: str, end_date: str, use_forecast_api: 
         "temperature_unit": "fahrenheit",
         "timezone": "America/Denver",
     }
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        for attempt in range(4):
-            resp = await client.get(base_url, params=params)
-            if resp.status_code == 429:
-                wait = 15 * (attempt + 1)
-                logger.warning(f"Open-Meteo rate limit (solar), retrying in {wait}s...")
-                await asyncio.sleep(wait)
-                continue
-            resp.raise_for_status()
-            break
-        else:
-            resp.raise_for_status()
+    async with _get_openmeteo_sem():
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            for attempt in range(6):
+                resp = await client.get(base_url, params=params)
+                if resp.status_code == 429:
+                    wait = 20 * (attempt + 1)
+                    logger.warning(f"Open-Meteo rate limit (solar), retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                break
+            else:
+                resp.raise_for_status()
 
     result: dict = {}
     data = resp.json()
