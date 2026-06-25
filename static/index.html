@@ -622,6 +622,11 @@
     try {
       const res  = await fetch(`/api/solar/forecast?date=${dateVal}`);
       const data = await res.json();
+      if (res.status === 503) {
+        showSolarMsg("Solar model is training — this only happens once. Try again in about 30 seconds.", "info");
+        setTimeout(() => { document.getElementById("solar-btn").disabled = false; }, 5000);
+        return;
+      }
       if (!res.ok) { showSolarMsg(data.detail ?? "Solar forecast failed."); return; }
       hideSolarMsg();
       renderSolar(data);

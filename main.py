@@ -470,15 +470,10 @@ async def train_model() -> None:
         model_state["training"] = False
 
 
-async def _train_solar_delayed() -> None:
-    await asyncio.sleep(90)   # let load model finish its weather fetch first
-    await train_solar_model()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(train_model())
-    asyncio.create_task(_train_solar_delayed())
+    # Solar model trains on demand (first Red Mesa request) — not at startup
     yield
 
 
@@ -671,6 +666,8 @@ async def accuracy(target_date: str = Query(..., alias="date", description="YYYY
 @app.get("/api/solar/status")
 async def solar_status():
     s = solar_model_state
+    if s["model"] is None and not s["training"] and s["error"] is None:
+        asyncio.create_task(train_solar_model())
     return {
         "ready": s["model"] is not None,
         "training": s["training"],
@@ -696,9 +693,9 @@ async def solar_forecast(
     fmt: str = Query("json", alias="format"),
 ):
     if solar_model_state["model"] is None:
-        detail = ("Solar model is still training..." if solar_model_state["training"]
-                  else f"Solar model not ready: {solar_model_state['error']}")
-        raise HTTPException(status_code=503, detail=detail)
+        if not solar_model_state["training"]:
+            asyncio.create_task(train_solar_model())
+        raise HTTPException(status_code=503, detail="Solar model is training — please try again in about 30 seconds.")
     try:
         dt = datetime.strptime(target_date, "%Y-%m-%d").date()
     except ValueError:
