@@ -925,6 +925,10 @@
       difEl.textContent = d.toLocaleString();
       difEl.style.color = d > 0 ? "#c53030" : "#276749";
     }
+    if (supplyChart) {
+      const ds = supplyChart.data.datasets.find(d => d.label === "GEN");
+      if (ds) { ds.data[hour] = gen; supplyChart.update(); }
+    }
     _updateSupplyTotals();
   }
 
@@ -1002,6 +1006,7 @@
     const crspData  = data.hourly.map(h => h.crsp      ?? 0);
     const prvData   = data.hourly.map(h => h.provo_riv ?? 0);
     const veyoData  = data.hourly.map(h => h.veyo      ?? 0);
+    const genData   = data.hourly.map(h => _supplyGen[h.hour] || 0);
     const loadData  = data.hourly.map(h => h.load      ?? null);
 
     if (supplyChart) supplyChart.destroy();
@@ -1019,6 +1024,7 @@
           { label: "CRSP",        data: crspData, stack: "s", backgroundColor: "rgba(160,80,80,0.82)",   yAxisID: "y" },
           { label: "Provo River", data: prvData,  stack: "s", backgroundColor: "rgba(100,160,100,0.82)", yAxisID: "y" },
           { label: "Veyo",        data: veyoData, stack: "s", backgroundColor: "rgba(180,120,60,0.82)",  yAxisID: "y" },
+          { label: "GEN",         data: genData,  stack: "s", backgroundColor: "rgba(255,210,0,0.88)",   yAxisID: "y" },
           { type: "line", label: "Load",
             data: loadData, borderColor: "rgba(229,62,62,1)", backgroundColor: "rgba(229,62,62,0.08)",
             borderWidth: 2.5, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y" },
