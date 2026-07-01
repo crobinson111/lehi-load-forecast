@@ -204,6 +204,27 @@
     .gen-input::-webkit-inner-spin-button,
     .gen-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     .gen-input[type=number] { -moz-appearance: textfield; }
+
+    /* Sticky Hour + HE columns in gen-sch table */
+    #gen-sch-table th:nth-child(1),
+    #gen-sch-table th:nth-child(2) { position: sticky; z-index: 2; }
+    #gen-sch-table td:nth-child(1),
+    #gen-sch-table td:nth-child(2) { position: sticky; z-index: 1; background: #fff; }
+    #gen-sch-table tr:last-child td:nth-child(1),
+    #gen-sch-table tr:last-child td:nth-child(2) { background: #f7fafc; }
+    #gen-sch-table th:nth-child(1), #gen-sch-table td:nth-child(1) { left: 0; }
+    #gen-sch-table th:nth-child(2), #gen-sch-table td:nth-child(2) { left: 72px; box-shadow: 2px 0 4px rgba(0,0,0,.07); }
+
+    /* Date chip */
+    .date-chip {
+      display: inline-flex; align-items: center; gap: .35rem;
+      background: #ebf8ff; border: 1px solid #bee3f8; color: #2b6cb0;
+      border-radius: 6px; padding: .25rem .65rem; font-size: .82rem; font-weight: 500;
+    }
+    .date-chip .chip-rm {
+      background: none; border: none; color: #2b6cb0; cursor: pointer;
+      padding: 0 0 0 .1rem; font-size: 1rem; line-height: 1; font-weight: 700;
+    }
   </style>
 </head>
 <body>
@@ -235,6 +256,7 @@
     <button class="tab-btn"        id="tab-btn-solar-steele-a"  onclick="switchTab('solar-steele-a')">Steele A Solar</button>
     <button class="tab-btn"        id="tab-btn-wind-horse-butte" onclick="switchTab('wind-horse-butte')">Horse Butte Wind</button>
     <button class="tab-btn"        id="tab-btn-supply"          onclick="switchTab('supply')">Supply Portfolio</button>
+    <button class="tab-btn"        id="tab-btn-gen-sch"         onclick="switchTab('gen-sch')">Gen Sch</button>
   </div>
 
   <!-- ══════════════════════ TAB 1: FORECAST ══════════════════════ -->
@@ -420,6 +442,7 @@
         <input type="date" id="supply-date" />
       </div>
       <button class="btn-primary" id="supply-btn" onclick="getSupply()">Get Supply Portfolio</button>
+      <button class="btn-secondary" onclick="pushToGenSch()" title="Copy current GEN schedule to Gen Sch tab">Copy to Gen Sch →</button>
     </div>
     <div id="supply-msg" class="hidden message"></div>
     <div id="supply-results" class="hidden">
@@ -461,6 +484,31 @@
     </div>
   </div>
 
+  <!-- ══════════════════════ TAB 7: GEN SCHEDULE ══════════════════════ -->
+  <div id="tab-gen-sch" class="hidden">
+    <div class="controls">
+      <div class="field">
+        <label for="gen-sch-date-input">Add Date</label>
+        <input type="date" id="gen-sch-date-input" />
+      </div>
+      <button class="btn-primary" onclick="addGenSchDate(document.getElementById('gen-sch-date-input').value)">Add Date</button>
+      <button class="btn-secondary" id="gen-sch-load-btn" onclick="loadGenSch()">Load Schedule</button>
+    </div>
+    <div id="gen-sch-chips" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.25rem;min-height:1rem"></div>
+    <div id="gen-sch-msg" class="message info hidden">Add at least one date above and click Load Schedule.</div>
+    <div id="gen-sch-results" class="hidden">
+      <div class="chart-wrap">
+        <div class="chart-title" id="gen-sch-title">Generation Schedule</div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="gen-sch-table" style="min-width:240px">
+            <thead><tr id="gen-sch-thead-row"></tr></thead>
+            <tbody id="gen-sch-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <script>
@@ -485,7 +533,7 @@
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["forecast", "accuracy", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply"].forEach(t => {
+    ["forecast", "accuracy", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "gen-sch"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -1098,6 +1146,103 @@
     _updateSupplyTotals();
 
     document.getElementById("supply-results").classList.remove("hidden");
+  }
+
+  // ── Tab 7: Gen Schedule ───────────────────────────────────────────────
+
+  let _genSchDates = [];
+
+  function _genSchFmtDate(d) {
+    const dt = new Date(d + "T12:00:00");
+    return dt.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+  }
+
+  function _renderGenSchChips() {
+    const el = document.getElementById("gen-sch-chips");
+    el.innerHTML = "";
+    _genSchDates.forEach(d => {
+      const chip = document.createElement("span");
+      chip.className = "date-chip";
+      chip.innerHTML =
+        `${_genSchFmtDate(d)} <button class="chip-rm" onclick="removeGenSchDate('${d}')" title="Remove">×</button>`;
+      el.appendChild(chip);
+    });
+  }
+
+  function addGenSchDate(dateStr) {
+    if (!dateStr) return;
+    if (!_genSchDates.includes(dateStr)) {
+      _genSchDates.push(dateStr);
+      _genSchDates.sort();
+      _renderGenSchChips();
+    }
+    document.getElementById("gen-sch-date-input").value = "";
+  }
+
+  function removeGenSchDate(dateStr) {
+    _genSchDates = _genSchDates.filter(d => d !== dateStr);
+    _renderGenSchChips();
+    if (_genSchDates.length === 0) {
+      document.getElementById("gen-sch-results").classList.add("hidden");
+      document.getElementById("gen-sch-msg").classList.remove("hidden");
+    } else {
+      loadGenSch();
+    }
+  }
+
+  function loadGenSch() {
+    const msgEl = document.getElementById("gen-sch-msg");
+    if (_genSchDates.length === 0) {
+      msgEl.classList.remove("hidden");
+      document.getElementById("gen-sch-results").classList.add("hidden");
+      return;
+    }
+    msgEl.classList.add("hidden");
+
+    const sorted = [..._genSchDates].sort();
+    document.getElementById("gen-sch-title").textContent =
+      "Generation Schedule — " + sorted.map(_genSchFmtDate).join(", ");
+
+    const hdr = document.getElementById("gen-sch-thead-row");
+    hdr.innerHTML = `<th>Hour</th><th>HE</th>` +
+      sorted.map(d =>
+        `<th>${_genSchFmtDate(d)}<br><span style="font-weight:400;font-size:.7rem;text-transform:none;letter-spacing:0">${d}</span></th>`
+      ).join("");
+
+    const tbody = document.getElementById("gen-sch-tbody");
+    tbody.innerHTML = "";
+
+    for (let hr = 0; hr < 24; hr++) {
+      const tr = document.createElement("tr");
+      let cols = `<td>${fmt12(hr)}</td><td>${hr + 1}</td>`;
+      sorted.forEach(d => {
+        const gen = _loadGen(d);
+        const val = gen[hr] || 0;
+        cols += `<td style="text-align:right">${val ? Math.round(val).toLocaleString() : "—"}</td>`;
+      });
+      tr.innerHTML = cols;
+      tbody.appendChild(tr);
+    }
+
+    const trT = document.createElement("tr");
+    trT.style.cssText = "font-weight:700;background:#f7fafc";
+    let totCols = `<td>Daily Total</td><td></td>`;
+    sorted.forEach(d => {
+      const gen = _loadGen(d);
+      const tot = Object.values(gen).reduce((s, v) => s + (parseFloat(v) || 0), 0);
+      totCols += `<td style="text-align:right">${tot ? Math.round(tot).toLocaleString() : "—"}</td>`;
+    });
+    trT.innerHTML = totCols;
+    tbody.appendChild(trT);
+
+    document.getElementById("gen-sch-results").classList.remove("hidden");
+  }
+
+  function pushToGenSch() {
+    if (!_supplyData) return;
+    switchTab("gen-sch");
+    addGenSchDate(_supplyData.date);
+    loadGenSch();
   }
 
   // ── Init ──────────────────────────────────────────────────────────────
