@@ -25,6 +25,14 @@ from sklearn.preprocessing import StandardScaler
 # Utah state holidays (includes federal + Pioneer Day Jul 24) through 2040
 _HOLIDAYS = holidays_lib.US(state="UT", years=range(2018, 2041))
 
+# NERC/WECC holidays: New Year's, Memorial Day, Independence Day, Labor Day, Thanksgiving, Christmas
+_WECC_HOLIDAY_NAMES = {
+    "New Year's Day", "Memorial Day", "Independence Day",
+    "Labor Day", "Thanksgiving", "Christmas Day",
+}
+_us_holidays = holidays_lib.US(years=range(2018, 2041))
+_WECC_HOLIDAYS: set = {d for d, name in _us_holidays.items() if any(w in name for w in _WECC_HOLIDAY_NAMES)}
+
 def _load_school_calendar() -> set:
     """Returns a set of date objects on which school is out."""
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "school_calendar.csv")
@@ -470,8 +478,8 @@ async def train_plant_model(plant_key: str) -> None:
 
 
 def _px_scheduled(om_hour: int, dt: date) -> float:
-    """PX fixed schedule: Mon-Sat in July only."""
-    if dt.month != 7 or dt.weekday() == 6:
+    """PX fixed schedule: Mon-Sat in July only, excluding WECC holidays."""
+    if dt in _WECC_HOLIDAYS or dt.month != 7 or dt.weekday() == 6:
         return 0.0
     if 7 <= om_hour <= 12:
         return 38210.0
@@ -483,8 +491,8 @@ def _px_scheduled(om_hour: int, dt: date) -> float:
 
 
 def _os_scheduled(om_hour: int, dt: date) -> float:
-    """OS fixed schedule: Mon-Sat 7am-10pm (om_hour 7-22). 0 on Sundays."""
-    if dt.weekday() == 6:
+    """OS fixed schedule: Mon-Sat 7am-10pm, excluding Sundays and WECC holidays."""
+    if dt in _WECC_HOLIDAYS or dt.weekday() == 6:
         return 0.0
     return 20000.0 if 7 <= om_hour <= 22 else 0.0
 
