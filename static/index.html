@@ -428,6 +428,7 @@
             <thead>
               <tr>
                 <th>Hour</th>
+                <th>HE</th>
                 <th>Red Mesa</th>
                 <th>Steele A</th>
                 <th>Nebo</th>
@@ -946,7 +947,7 @@
     const ds = td == null ? "" : td > 0 ? "color:#c53030" : "color:#276749";
     const tc = v => `<td>${Math.round(v).toLocaleString()}</td>`;
     document.getElementById("sply-tot-row").innerHTML =
-      `<td>Daily Total</td>` +
+      `<td>Daily Total</td><td></td>` +
       tc(rm) + tc(sa) + tc(nb) + tc(hb) + tc(px) + tc(os) + tc(cr) + tc(pr) + tc(vy) +
       `<td style="border-left:2px solid #e2e8f0">${Math.round(gen).toLocaleString()}</td>` +
       `<td style="border-left:2px solid #e2e8f0;font-weight:600">${Math.round(tot).toLocaleString()}</td>` +
@@ -1064,6 +1065,7 @@
       const tr = document.createElement("tr");
       tr.innerHTML =
         `<td>${fmt12(h.hour)}</td>` +
+        `<td>${h.hour + 1}</td>` +
         cell(h.red_mesa) + cell(h.steele_a) + cell(h.nebo) + cell(h.h_butte) +
         cell(h.px) + cell(h.os) + cell(h.crsp) + cell(h.provo_riv) + cell(h.veyo) +
         `<td style="border-left:2px solid #e2e8f0;padding:3px 6px" class="gen-td-${h.hour}"></td>` +
