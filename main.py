@@ -227,7 +227,7 @@ def _uamps_fetch_day_sync(user_id: str, password: str, dt: date) -> dict:
 
 def load_uamps_schedule() -> dict:
     """Load UAMPS schedule CSV. Returns {date_str: {hr_1_24: {crsp, provo_riv, veyo}}}."""
-    url = os.environ.get("UAMPS_SCHEDULE_CSV_URL")
+    url = (os.environ.get("UAMPS_SCHEDULE_CSV_URL") or "").strip()
     if not url:
         return {}
     try:
@@ -1554,7 +1554,7 @@ async def root(target_date: str = Query(None, alias="date")):
 async def uamps_test():
     """Diagnose UAMPS data sources — returns pretty-printed JSON."""
     today_str = date.today().isoformat()
-    csv_url   = os.getenv("UAMPS_SCHEDULE_CSV_URL", "")
+    csv_url   = (os.getenv("UAMPS_SCHEDULE_CSV_URL") or "").strip()
     result = {
         "csv_url_set":       bool(csv_url),
         "csv_url":           csv_url or "(not set)",
