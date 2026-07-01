@@ -1552,17 +1552,18 @@ async def root(target_date: str = Query(None, alias="date")):
 
 @app.get("/api/uamps/test")
 async def uamps_test():
-    """Diagnose UAMPS connectivity — returns pretty-printed JSON."""
-    user_id  = os.getenv("UAMPS_USER_ID", "")
-    password = os.getenv("UAMPS_PASSWORD", "")
-    if not user_id or not password:
-        result = {"ok": False, "error": "UAMPS_USER_ID or UAMPS_PASSWORD not set in environment"}
-    else:
-        try:
-            data = await asyncio.to_thread(_uamps_fetch_day_sync, user_id, password, date.today())
-            result = {"ok": True, "hours": len(data), "sample": {str(k): v for k, v in list(data.items())[:3]}}
-        except Exception as exc:
-            result = {"ok": False, "error": str(exc)}
+    """Diagnose UAMPS data sources — returns pretty-printed JSON."""
+    today_str = date.today().isoformat()
+    csv_url   = os.getenv("UAMPS_SCHEDULE_CSV_URL", "")
+    result = {
+        "csv_url_set":       bool(csv_url),
+        "csv_url":           csv_url or "(not set)",
+        "csv_dates_loaded":  len(uamps_schedule),
+        "csv_has_today":     today_str in uamps_schedule,
+        "csv_date_range":    [min(uamps_schedule), max(uamps_schedule)] if uamps_schedule else None,
+        "csv_sample_today":  {str(k): v for k, v in list((uamps_schedule.get(today_str) or {}).items())[:3]},
+        "live_creds_set":    bool(os.getenv("UAMPS_USER_ID")) and bool(os.getenv("UAMPS_PASSWORD")),
+    }
     return Response(content=json.dumps(result, indent=2), media_type="application/json")
 
 
