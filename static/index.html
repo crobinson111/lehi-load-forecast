@@ -212,6 +212,7 @@
     <button class="tab-btn"        id="tab-btn-accuracy"  onclick="switchTab('accuracy')">Forecast vs Actuals</button>
     <button class="tab-btn"        id="tab-btn-solar-red-mesa"  onclick="switchTab('solar-red-mesa')">Red Mesa Solar</button>
     <button class="tab-btn"        id="tab-btn-solar-steele-a"  onclick="switchTab('solar-steele-a')">Steele A Solar</button>
+    <button class="tab-btn"        id="tab-btn-wind-horse-butte" onclick="switchTab('wind-horse-butte')">Horse Butte Wind</button>
     <button class="tab-btn"        id="tab-btn-supply"          onclick="switchTab('supply')">Supply Portfolio</button>
   </div>
 
@@ -363,7 +364,34 @@
     </div>
   </div>
 
-  <!-- ══════════════════════ TAB 5: SUPPLY PORTFOLIO ══════════════════════ -->
+  <!-- ══════════════════════ TAB 5: HORSE BUTTE WIND ══════════════════════ -->
+  <div id="tab-wind-horse-butte" class="hidden">
+    <div class="controls">
+      <div class="field">
+        <label for="wind-horse-butte-date">Date</label>
+        <input type="date" id="wind-horse-butte-date" />
+      </div>
+      <button class="btn-primary" id="wind-horse-butte-btn" onclick="getWindForecast('horse-butte')">Get Wind Forecast</button>
+    </div>
+    <div id="wind-horse-butte-msg" class="hidden message"></div>
+    <div id="wind-horse-butte-results" class="hidden">
+      <div class="cards">
+        <div class="card avg"><div class="card-label">Total Generation</div><div class="card-value" id="wind-horse-butte-total">—<span class="card-unit">kWh</span></div></div>
+        <div class="card peak"><div class="card-label">Peak Hour</div><div class="card-value" id="wind-horse-butte-peakhour">—</div></div>
+        <div class="card hour"><div class="card-label">Peak Generation</div><div class="card-value" id="wind-horse-butte-peak">—<span class="card-unit">kWh</span></div></div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-title" id="wind-horse-butte-chart-title">Horse Butte Wind Generation</div>
+        <div class="chart-container"><canvas id="wind-horse-butte-chart"></canvas></div>
+        <table class="data-table" style="margin-top:1.25rem">
+          <thead><tr><th>Hour</th><th>Wind Speed (m/s)</th><th id="wind-horse-butte-kwh-header">Generation (kWh)</th></tr></thead>
+          <tbody id="wind-horse-butte-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ TAB 6: SUPPLY PORTFOLIO ══════════════════════ -->
   <div id="tab-supply" class="hidden">
     <div class="controls">
       <div class="field">
@@ -422,12 +450,13 @@
   document.getElementById("acc-date-input").max   = yesterdayStr;
   document.getElementById("solar-red-mesa-date").value  = todayStr;
   document.getElementById("solar-steele-a-date").value  = todayStr;
+  document.getElementById("wind-horse-butte-date").value = todayStr;
   document.getElementById("supply-date").value           = todayStr;
 
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["forecast", "accuracy", "solar-red-mesa", "solar-steele-a", "supply"].forEach(t => {
+    ["forecast", "accuracy", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -759,7 +788,103 @@
     document.getElementById(`${p}-results`).classList.remove("hidden");
   }
 
-  // ── Tab 5: Supply Portfolio ───────────────────────────────────────────
+  // ── Tab 5: Wind Plants (generic) ─────────────────────────────────────
+
+  const windCharts = {};
+
+  async function getWindForecast(plant) {
+    const dateVal = document.getElementById(`wind-${plant}-date`).value;
+    const msgEl   = document.getElementById(`wind-${plant}-msg`);
+    const btn     = document.getElementById(`wind-${plant}-btn`);
+    const showM   = (t, type="error") => { msgEl.textContent = t; msgEl.className = `message ${type}`; msgEl.classList.remove("hidden"); };
+    const hideM   = () => msgEl.classList.add("hidden");
+
+    if (!dateVal) { showM("Please select a date."); return; }
+    hideM();
+    btn.disabled = true;
+    document.getElementById(`wind-${plant}-results`).classList.add("hidden");
+    showM("Fetching wind forecast…", "info");
+    try {
+      const res  = await fetch(`/api/wind/${plant}/forecast?date=${dateVal}`);
+      const data = await res.json();
+      if (res.status === 503) {
+        showM("Wind model is training — this only happens once. Try again in about 30 seconds.", "info");
+        setTimeout(() => { btn.disabled = false; }, 5000);
+        return;
+      }
+      if (!res.ok) { showM(data.detail ?? "Wind forecast failed."); return; }
+      hideM();
+      renderWind(plant, data);
+    } catch (e) {
+      showM("Network error: " + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderWind(plant, data) {
+    const isHistorical = data.type === "historical";
+    const s = data.summary;
+    const p = `wind-${plant}`;
+
+    document.getElementById(`${p}-chart-title`).textContent =
+      `Horse Butte Wind ${isHistorical ? "Historical" : "Forecast"} — ${data.date}`;
+    document.getElementById(`${p}-kwh-header`).textContent = isHistorical ? "Actual (kWh)" : "Forecast (kWh)";
+    document.getElementById(`${p}-total`).innerHTML    = `${s.total_kwh != null ? s.total_kwh.toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
+    document.getElementById(`${p}-peak`).innerHTML     = `${s.peak_kwh  != null ? s.peak_kwh.toLocaleString()  : "—"}<span class="card-unit"> kWh</span>`;
+    document.getElementById(`${p}-peakhour`).textContent = s.peak_hour != null ? fmt12(s.peak_hour) : "—";
+
+    const labels = data.hourly.map(h => fmt12(h.hour));
+    const kwhs   = data.hourly.map(h => h.kwh ?? 0);
+    const speeds = data.hourly.map(h => h.wind_speed);
+    const barColor = isHistorical
+      ? { bg: "rgba(49,130,206,0.75)", border: "rgba(49,130,206,1)" }
+      : { bg: "rgba(66,153,225,0.75)", border: "rgba(66,153,225,1)" };
+
+    const tbody = document.getElementById(`${p}-tbody`);
+    tbody.innerHTML = "";
+    data.hourly.forEach(h => {
+      const tr = document.createElement("tr");
+      if (h.kwh === s.peak_kwh && s.peak_kwh > 0) tr.className = "peak-row";
+      tr.innerHTML = `<td>${fmt12(h.hour)}</td><td>${h.wind_speed != null ? h.wind_speed.toFixed(1) : "—"}</td><td>${h.kwh != null ? h.kwh.toLocaleString() : "—"}</td>`;
+      tbody.appendChild(tr);
+    });
+
+    if (windCharts[plant]) windCharts[plant].destroy();
+    windCharts[plant] = new Chart(document.getElementById(`${p}-chart`).getContext("2d"), {
+      data: {
+        labels,
+        datasets: [
+          { type: "bar",  label: isHistorical ? "Actual (kWh)" : "Forecast (kWh)",
+            data: kwhs, backgroundColor: barColor.bg, borderColor: barColor.border, borderWidth: 1, yAxisID: "yKwh", order: 2 },
+          { type: "line", label: "Wind Speed (m/s)",
+            data: speeds, borderColor: "#718096", backgroundColor: "rgba(113,128,150,.1)",
+            borderWidth: 1.5, pointRadius: 2, tension: 0.4, fill: false, yAxisID: "yWind", order: 1 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "top" },
+          tooltip: { callbacks: { label: ctx => {
+            const v = ctx.parsed.y;
+            return ctx.dataset.label.includes("Wind")
+              ? ` Wind: ${v != null ? v.toFixed(1) + " m/s" : "n/a"}`
+              : ` Gen: ${v != null ? v.toLocaleString() + " kWh" : "n/a"}`;
+          }}},
+        },
+        scales: {
+          yKwh:  { type: "linear", position: "left",  title: { display: true, text: "Generation (kWh)" }, beginAtZero: true },
+          yWind: { type: "linear", position: "right", title: { display: true, text: "Wind Speed (m/s)" }, beginAtZero: true, grid: { drawOnChartArea: false } },
+        },
+      },
+    });
+
+    document.getElementById(`${p}-results`).classList.remove("hidden");
+  }
+
+  // ── Tab 6: Supply Portfolio ───────────────────────────────────────────
 
   async function getSupply() {
     const dateVal = document.getElementById("supply-date").value;

@@ -12,6 +12,7 @@ output_solar_wx    = sys.argv[5]
 output_steele_a    = sys.argv[6]
 output_steele_a_wx = sys.argv[7]
 output_supply      = sys.argv[8]
+output_h_butte_wx  = sys.argv[9]
 
 # ── Excel export ─────────────────────────────────────────────────────────────
 try:
@@ -185,5 +186,29 @@ df_supply["os"]      = pd.to_numeric(df_supply["OS"]      if "OS"      in df_sup
 df_supply = df_supply[(df_supply["hr"] >= 1) & (df_supply["hr"] <= 24)]
 df_supply[["date", "hr", "nebo", "h_butte", "px", "os"]].to_csv(output_supply, index=False)
 print(f"Wrote {len(df_supply)} supply history rows to {output_supply}")
+
+time.sleep(5)
+
+# Horse Butte wind weather — last 3 years for Idaho Falls, ID
+h_butte_end   = df_supply["date"].max()
+h_butte_start = (pd.to_datetime(h_butte_end) - pd.DateOffset(years=3)).strftime("%Y-%m-%d")
+print(f"\nFetching Horse Butte wind weather {h_butte_start} to {h_butte_end} for Idaho Falls, ID...")
+wx_hb = fetch_archive(43.4917, -112.0341, h_butte_start, h_butte_end,
+                      ["wind_speed_100m", "wind_direction_100m"])
+rows_hb = []
+for t, spd, d in zip(wx_hb["hourly"]["time"],
+                     wx_hb["hourly"]["wind_speed_100m"],
+                     wx_hb["hourly"]["wind_direction_100m"]):
+    if spd is None:
+        continue
+    dt = datetime.fromisoformat(t)
+    rows_hb.append({
+        "date":       dt.strftime("%Y-%m-%d"),
+        "hr":         dt.hour + 1,
+        "wind_speed": round(float(spd), 3),
+        "wind_dir":   round(float(d) if d is not None else 0.0, 1),
+    })
+pd.DataFrame(rows_hb).to_csv(output_h_butte_wx, index=False)
+print(f"Wrote {len(rows_hb)} Horse Butte wind weather rows to {output_h_butte_wx}")
 
 print("\nDone.")

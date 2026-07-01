@@ -57,12 +57,14 @@ logger = logging.getLogger(__name__)
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 CAISO_NODE = "ELAP_PACE-APND"
 
-LEHI_LAT     = 40.3916
-LEHI_LON     = -111.8508
-BLUFF_LAT    = 37.2879   # Red Mesa solar plant — Bluff, UT
-BLUFF_LON    = -109.5512
-PLYMOUTH_LAT = 41.878    # Steele A solar plant — Plymouth, UT
-PLYMOUTH_LON = -112.148
+LEHI_LAT          = 40.3916
+LEHI_LON          = -111.8508
+BLUFF_LAT         = 37.2879   # Red Mesa solar plant — Bluff, UT
+BLUFF_LON         = -109.5512
+PLYMOUTH_LAT      = 41.878    # Steele A solar plant — Plymouth, UT
+PLYMOUTH_LON      = -112.148
+IDAHO_FALLS_LAT   = 43.4917   # Horse Butte wind farm — Idaho Falls, ID
+IDAHO_FALLS_LON   = -112.0341
 
 SOLAR_PLANTS: dict = {
     "red-mesa": {
@@ -132,6 +134,31 @@ solar_states: dict = {
         "error": None,
     }
     for key in SOLAR_PLANTS
+}
+
+WIND_PLANTS: dict = {
+    "horse-butte": {
+        "label":       "Horse Butte",
+        "lat":         IDAHO_FALLS_LAT,
+        "lon":         IDAHO_FALLS_LON,
+        "column":      "H BUTTE",
+        "supply_col":  "h_butte",   # column name in supply_history CSV
+        "weather_env": "H_BUTTE_WEATHER_CSV_URL",
+    },
+}
+
+wind_states: dict = {
+    key: {
+        "model": None,
+        "history": {},
+        "trained_at": None,
+        "record_count": 0,
+        "date_range": None,
+        "r2": None,
+        "training": False,
+        "error": None,
+    }
+    for key in WIND_PLANTS
 }
 
 supply_history: dict = {}  # {date_str: {om_hour (0-23): {nebo, h_butte, px, os}}}
@@ -390,6 +417,56 @@ async def fetch_solar_weather(start_date: str, end_date: str, lat: float, lon: f
     return result
 
 
+async def fetch_wind_weather(start_date: str, end_date: str, lat: float, lon: float,
+                             use_forecast_api: bool = False) -> dict:
+    """Returns {date_str: {hour_0_23: {"wind_speed": float, "wind_dir": float}}}."""
+    cache_key = ("wind", lat, lon, start_date, end_date, use_forecast_api)
+    cached = _weather_cache.get(cache_key)
+    if cached and time.monotonic() - cached[0] < _WEATHER_CACHE_TTL:
+        return cached[1]
+
+    base_url = (
+        "https://api.open-meteo.com/v1/forecast"
+        if use_forecast_api
+        else "https://archive-api.open-meteo.com/v1/archive"
+    )
+    params = {
+        "latitude": lat, "longitude": lon,
+        "start_date": start_date, "end_date": end_date,
+        "hourly": "wind_speed_100m,wind_direction_100m",
+        "timezone": "America/Denver",
+    }
+    async with _get_openmeteo_sem():
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            for attempt in range(6):
+                resp = await client.get(base_url, params=params)
+                if resp.status_code == 429:
+                    wait = 20 * (attempt + 1)
+                    logger.warning(f"Open-Meteo rate limit (wind), retrying in {wait}s...")
+                    await asyncio.sleep(wait)
+                    continue
+                resp.raise_for_status()
+                break
+            else:
+                resp.raise_for_status()
+
+    result: dict = {}
+    data = resp.json()
+    times  = data["hourly"]["time"]
+    speeds = data["hourly"]["wind_speed_100m"]
+    dirs   = data["hourly"]["wind_direction_100m"]
+    for t, spd, d in zip(times, speeds, dirs):
+        if spd is None:
+            continue
+        dt = datetime.fromisoformat(t)
+        result.setdefault(dt.strftime("%Y-%m-%d"), {})[dt.hour] = {
+            "wind_speed": spd,
+            "wind_dir":   d if d is not None else 0.0,
+        }
+    _weather_cache[cache_key] = (time.monotonic(), result)
+    return result
+
+
 def build_solar_features(hr_1_to_24: int, ghi: float, temp_f: float, date_str: str) -> np.ndarray:
     angle   = 2 * np.pi * hr_1_to_24 / 24
     sin_hr  = np.sin(angle);     cos_hr  = np.cos(angle)
@@ -407,6 +484,33 @@ def build_solar_features(hr_1_to_24: int, ghi: float, temp_f: float, date_str: s
         sin_hr2, cos_hr2,
         sin_doy, cos_doy,
         temp_f,
+    ]])
+
+
+def build_wind_features(hr_1_to_24: int, wind_speed: float, wind_dir_deg: float, date_str: str) -> np.ndarray:
+    angle   = 2 * np.pi * hr_1_to_24 / 24
+    sin_hr  = np.sin(angle);   cos_hr  = np.cos(angle)
+    sin_hr2 = np.sin(2*angle); cos_hr2 = np.cos(2*angle)
+
+    d   = datetime.strptime(date_str, "%Y-%m-%d").date()
+    doy = d.timetuple().tm_yday
+    sin_doy = np.sin(2*np.pi*doy/365.25)
+    cos_doy = np.cos(2*np.pi*doy/365.25)
+
+    wind_dir_rad = np.deg2rad(wind_dir_deg)
+    sin_dir = np.sin(wind_dir_rad)
+    cos_dir = np.cos(wind_dir_rad)
+
+    ws2 = wind_speed ** 2
+    ws3 = wind_speed ** 3
+
+    return np.array([[
+        wind_speed, ws2, ws3,
+        wind_speed * sin_doy, wind_speed * cos_doy,  # seasonal wind-power interaction
+        sin_dir, cos_dir,
+        sin_hr, cos_hr,
+        sin_hr2, cos_hr2,
+        sin_doy, cos_doy,
     ]])
 
 
@@ -482,6 +586,108 @@ def _nebo_scheduled() -> float:
     return 10000.0
 
 
+def load_wind_data(plant_key: str) -> pd.DataFrame:
+    """Load wind plant history from supply_history CSV (reuses already-fetched file)."""
+    plant = WIND_PLANTS[plant_key]
+    supply_url = os.environ.get("SUPPLY_HISTORY_CSV_URL")
+    if supply_url:
+        resp = httpx.get(supply_url, timeout=30.0)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text))
+        df["kwh"] = pd.to_numeric(df[plant["supply_col"]], errors="coerce").fillna(0)
+        df["date"] = df["date"].astype(str)
+        df["hr"]   = df["hr"].astype(int)
+        return df[["date", "hr", "kwh"]]
+
+    try:
+        tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+        tmp.close()
+        shutil.copy2(EXCEL_PATH, tmp.name)
+    except Exception as exc:
+        raise RuntimeError(f"Could not copy spreadsheet: {exc}")
+    try:
+        df = pd.read_excel(tmp.name, sheet_name="Sch Log Data (2)", engine="openpyxl")
+    finally:
+        os.unlink(tmp.name)
+    df.columns = df.columns.str.strip()
+    df = df.dropna(subset=["Date", "Hr"])
+    df["date"] = (
+        df["Date"].astype(int).astype(str).str.zfill(6)
+        .pipe(lambda s: pd.to_datetime(s, format="%y%m%d"))
+        .dt.strftime("%Y-%m-%d")
+    )
+    df["hr"]  = df["Hr"].astype(int)
+    df["kwh"] = pd.to_numeric(df[plant["column"]], errors="coerce").fillna(0)
+    df = df[(df["hr"] >= 1) & (df["hr"] <= 24)]
+    return df[["date", "hr", "kwh"]]
+
+
+WIND_TRAINING_YEARS = 3
+
+
+async def train_wind_model(plant_key: str) -> None:
+    plant = WIND_PLANTS[plant_key]
+    state = wind_states[plant_key]
+    state["training"] = True
+    state["error"]    = None
+    try:
+        logger.info(f"Loading {plant['label']} wind data...")
+        df = load_wind_data(plant_key)
+        df = df[df["kwh"] >= 0]
+
+        cutoff = (pd.to_datetime(df["date"].max()) - pd.DateOffset(years=WIND_TRAINING_YEARS)).strftime("%Y-%m-%d")
+        train_df = df[df["date"] >= cutoff].copy()
+        logger.info(f"{plant['label']} training on {len(train_df)} rows from {train_df['date'].min()} to {train_df['date'].max()}")
+
+        weather = _load_weather_csv(plant["weather_env"])
+        if not weather:
+            logger.info(f"Fetching wind weather for {plant['label']}...")
+            weather = await fetch_wind_weather(
+                train_df["date"].min(), train_df["date"].max(),
+                plant["lat"], plant["lon"],
+            )
+        else:
+            logger.info(f"Using pre-loaded training weather for {plant['label']}")
+
+        train_df["om_hour"]    = train_df["hr"] - 1
+        train_df["wind_speed"] = train_df.apply(lambda r: (weather.get(r["date"], {}).get(r["om_hour"]) or {}).get("wind_speed"), axis=1)
+        train_df["wind_dir"]   = train_df.apply(lambda r: (weather.get(r["date"], {}).get(r["om_hour"]) or {}).get("wind_dir"),   axis=1)
+        train_df = train_df.dropna(subset=["wind_speed", "wind_dir"])
+
+        if len(train_df) < 24:
+            raise RuntimeError(f"Only {len(train_df)} rows after joining weather data.")
+
+        X = np.vstack(train_df.apply(
+            lambda r: build_wind_features(r["hr"], r["wind_speed"], r["wind_dir"], r["date"])[0], axis=1
+        ).values)
+        y = train_df["kwh"].values
+
+        mdl = Pipeline([("scaler", StandardScaler()), ("ridge", Ridge(alpha=10.0))])
+        mdl.fit(X, y)
+        r2 = float(mdl.score(X, y))
+
+        history: dict = {}
+        for _, row in df.iterrows():
+            om_hour = int(row["hr"]) - 1
+            history.setdefault(row["date"], {})[om_hour] = round(float(row["kwh"]), 1)
+
+        state.update({
+            "model": mdl,
+            "history": history,
+            "trained_at": datetime.now().isoformat(timespec="seconds"),
+            "record_count": int(len(y)),
+            "date_range": [train_df["date"].min(), train_df["date"].max()],
+            "r2": round(r2, 3),
+        })
+        logger.info(f"{plant['label']} wind model ready — {len(y):,} samples, R²={r2:.3f}")
+
+    except Exception as exc:
+        logger.error(f"{plant['label']} wind training failed: {exc}")
+        state["error"] = str(exc)
+    finally:
+        state["training"] = False
+
+
 def _px_scheduled(om_hour: int, dt: date) -> float:
     """PX fixed schedule: Mon-Sat in July only, excluding WECC holidays."""
     if dt in _WECC_HOLIDAYS or dt.month != 7 or dt.weekday() == 6:
@@ -529,6 +735,37 @@ async def _plant_hourly_kwh(plant_key: str, target_date: str, dt: date) -> dict:
             result[om_hour] = 0.0
         else:
             pred = float(max(mdl.predict(build_solar_features(om_hour + 1, wx["ghi"], wx["temp_f"], target_date))[0], 0))
+            result[om_hour] = round(pred, 1)
+    return result
+
+
+async def _wind_plant_hourly_kwh(plant_key: str, target_date: str, dt: date) -> dict:
+    """Returns {om_hour: kwh} for a wind plant. Returns {} if model not ready."""
+    state = wind_states[plant_key]
+    cfg   = WIND_PLANTS[plant_key]
+    if state["model"] is None:
+        if not state["training"] and state["error"] is None:
+            asyncio.create_task(train_wind_model(plant_key))
+        return {}
+    if target_date in state["history"]:
+        return state["history"][target_date]
+    use_forecast_api = dt >= date.today() - timedelta(days=7)
+    try:
+        weather = await fetch_wind_weather(
+            target_date, target_date, cfg["lat"], cfg["lon"],
+            use_forecast_api=use_forecast_api,
+        )
+        day_wx = weather.get(target_date, {})
+    except Exception:
+        return {}
+    mdl = state["model"]
+    result: dict = {}
+    for om_hour in range(24):
+        wx = day_wx.get(om_hour)
+        if wx is None:
+            result[om_hour] = 0.0
+        else:
+            pred = float(max(mdl.predict(build_wind_features(om_hour + 1, wx["wind_speed"], wx["wind_dir"], target_date))[0], 0))
             result[om_hour] = round(pred, 1)
     return result
 
@@ -854,6 +1091,12 @@ def _get_plant_or_404(plant: str):
     return SOLAR_PLANTS[plant], solar_states[plant]
 
 
+def _get_wind_or_404(plant: str):
+    if plant not in WIND_PLANTS:
+        raise HTTPException(status_code=404, detail=f"Unknown wind plant '{plant}'. Valid: {list(WIND_PLANTS)}")
+    return WIND_PLANTS[plant], wind_states[plant]
+
+
 @app.get("/api/solar/{plant}/status")
 async def solar_plant_status(plant: str):
     cfg, state = _get_plant_or_404(plant)
@@ -956,6 +1199,112 @@ async def solar_plant_forecast(
     return {"date": target_date, "plant": plant, "type": "forecast", "hourly": hourly, "summary": summary}
 
 
+@app.get("/api/wind/{plant}/status")
+async def wind_plant_status(plant: str):
+    cfg, state = _get_wind_or_404(plant)
+    if state["model"] is None and not state["training"] and state["error"] is None:
+        asyncio.create_task(train_wind_model(plant))
+    return {
+        "plant":        plant,
+        "label":        cfg["label"],
+        "ready":        state["model"] is not None,
+        "training":     state["training"],
+        "error":        state["error"],
+        "trained_at":   state["trained_at"],
+        "record_count": state["record_count"],
+        "date_range":   state["date_range"],
+        "r2":           state["r2"],
+    }
+
+
+@app.post("/api/wind/{plant}/train")
+async def wind_plant_train(plant: str, background_tasks: BackgroundTasks):
+    cfg, state = _get_wind_or_404(plant)
+    if state["training"]:
+        raise HTTPException(status_code=409, detail=f"{cfg['label']} model is already training.")
+    background_tasks.add_task(train_wind_model, plant)
+    return {"message": f"{cfg['label']} wind model training started."}
+
+
+@app.get("/api/wind/{plant}/forecast")
+async def wind_plant_forecast(
+    plant: str,
+    target_date: str = Query(..., alias="date", description="YYYY-MM-DD"),
+    fmt: str = Query("json", alias="format"),
+):
+    cfg, state = _get_wind_or_404(plant)
+    if state["model"] is None:
+        if not state["training"]:
+            asyncio.create_task(train_wind_model(plant))
+        raise HTTPException(status_code=503, detail=f"{cfg['label']} model is training — please try again in about 30 seconds.")
+    try:
+        dt = datetime.strptime(target_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    if dt > date.today() + timedelta(days=16):
+        raise HTTPException(status_code=400, detail="Open-Meteo only forecasts up to 16 days ahead.")
+
+    if target_date in state["history"]:
+        day_hist = state["history"][target_date]
+        try:
+            weather = await fetch_wind_weather(target_date, target_date, cfg["lat"], cfg["lon"], use_forecast_api=False)
+            day_wx = weather.get(target_date, {})
+        except Exception:
+            day_wx = {}
+        hourly = []
+        for om_hour in range(24):
+            kwh = day_hist.get(om_hour, 0.0)
+            wx  = day_wx.get(om_hour)
+            hourly.append({"hour": om_hour, "wind_speed": round(wx["wind_speed"], 2) if wx else None, "kwh": kwh})
+        kwhs = [h["kwh"] for h in hourly if h["kwh"] is not None]
+        peak = max(kwhs) if kwhs else None
+        summary = {
+            "peak_kwh":   peak,
+            "peak_hour":  next((h["hour"] for h in hourly if h["kwh"] == peak), None) if peak else None,
+            "total_kwh":  round(sum(kwhs), 1) if kwhs else None,
+        }
+        if fmt == "csv":
+            buf = io.StringIO()
+            csv.writer(buf).writerows([["Hour", "Wind Speed (m/s)", "Generation (kWh)"]] +
+                [[h["hour"], h["wind_speed"], h["kwh"]] for h in hourly])
+            return Response(content=buf.getvalue(), media_type="text/csv")
+        return {"date": target_date, "plant": plant, "type": "historical", "hourly": hourly, "summary": summary}
+
+    use_forecast_api = dt >= date.today() - timedelta(days=7)
+    try:
+        weather = await fetch_wind_weather(target_date, target_date, cfg["lat"], cfg["lon"],
+                                           use_forecast_api=use_forecast_api)
+        day_wx = weather.get(target_date, {})
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Wind weather API error: {exc}")
+    if not day_wx:
+        raise HTTPException(status_code=404, detail=f"No wind weather data for {target_date}.")
+
+    mdl = state["model"]
+    hourly = []
+    for om_hour in range(24):
+        wx = day_wx.get(om_hour)
+        if wx is None:
+            hourly.append({"hour": om_hour, "wind_speed": None, "kwh": 0.0})
+            continue
+        pred = float(max(mdl.predict(build_wind_features(om_hour + 1, wx["wind_speed"], wx["wind_dir"], target_date))[0], 0))
+        hourly.append({"hour": om_hour, "wind_speed": round(wx["wind_speed"], 2), "kwh": round(pred, 1)})
+
+    kwhs = [h["kwh"] for h in hourly]
+    peak = max(kwhs) if kwhs else None
+    summary = {
+        "peak_kwh":  peak,
+        "peak_hour": next((h["hour"] for h in hourly if h["kwh"] == peak), None),
+        "total_kwh": round(sum(kwhs), 1),
+    }
+    if fmt == "csv":
+        buf = io.StringIO()
+        csv.writer(buf).writerows([["Hour", "Wind Speed (m/s)", "Generation (kWh)"]] +
+            [[h["hour"], h["wind_speed"], h["kwh"]] for h in hourly])
+        return Response(content=buf.getvalue(), media_type="text/csv")
+    return {"date": target_date, "plant": plant, "type": "forecast", "hourly": hourly, "summary": summary}
+
+
 @app.get("/api/supply")
 async def supply_portfolio(
     target_date: str = Query(..., alias="date", description="YYYY-MM-DD"),
@@ -969,8 +1318,9 @@ async def supply_portfolio(
 
     is_historical = target_date in supply_history
 
-    red_mesa_kwh = await _plant_hourly_kwh("red-mesa", target_date, dt)
-    steele_a_kwh = await _plant_hourly_kwh("steele-a", target_date, dt)
+    red_mesa_kwh    = await _plant_hourly_kwh("red-mesa", target_date, dt)
+    steele_a_kwh    = await _plant_hourly_kwh("steele-a", target_date, dt)
+    horse_butte_kwh = await _wind_plant_hourly_kwh("horse-butte", target_date, dt)
 
     # Load — actuals if in history, otherwise model forecast
     load_by_hour: dict = {}
@@ -1004,7 +1354,7 @@ async def supply_portfolio(
             os_ = round(supply.get("os",      0.0), 1)
         else:
             nb  = round(_nebo_scheduled(), 1)
-            hb  = 0.0
+            hb  = round(horse_butte_kwh.get(om_hour, 0.0), 1)
             px  = round(_px_scheduled(om_hour, dt), 1)
             os_ = round(_os_scheduled(om_hour, dt), 1)
         total = round(rm + sa + nb + hb + px + os_, 1)
@@ -1020,11 +1370,13 @@ async def supply_portfolio(
             "load":      load_by_hour.get(om_hour),
         })
 
-    solar_warnings = [
+    warnings = [
         f"{SOLAR_PLANTS[k]['label']} model not ready"
         for k in ("red-mesa", "steele-a")
         if solar_states[k]["model"] is None
     ]
+    if wind_states["horse-butte"]["model"] is None:
+        warnings.append("Horse Butte model not ready")
 
     day_total = round(sum(h["total"] for h in hourly), 1)
     return {
@@ -1032,7 +1384,7 @@ async def supply_portfolio(
         "type": "historical" if is_historical else "forecast",
         "hourly": hourly,
         "day_total": day_total,
-        "solar_warnings": solar_warnings,
+        "solar_warnings": warnings,
     }
 
 
