@@ -483,8 +483,8 @@ def _px_scheduled(om_hour: int, dt: date) -> float:
 
 
 def _os_scheduled(om_hour: int) -> float:
-    """OS fixed schedule: every day 8am-11pm (om_hour 8-23)."""
-    return 20000.0 if 8 <= om_hour <= 23 else 0.0
+    """OS fixed schedule: every day 7am-10pm (om_hour 7-22)."""
+    return 20000.0 if 7 <= om_hour <= 22 else 0.0
 
 
 async def _plant_hourly_kwh(plant_key: str, target_date: str, dt: date) -> dict:
