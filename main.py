@@ -482,8 +482,10 @@ def _px_scheduled(om_hour: int, dt: date) -> float:
     return 0.0
 
 
-def _os_scheduled(om_hour: int) -> float:
-    """OS fixed schedule: every day 7am-10pm (om_hour 7-22)."""
+def _os_scheduled(om_hour: int, dt: date) -> float:
+    """OS fixed schedule: Mon-Sat 7am-10pm (om_hour 7-22). 0 on Sundays."""
+    if dt.weekday() == 6:
+        return 0.0
     return 20000.0 if 7 <= om_hour <= 22 else 0.0
 
 
@@ -973,7 +975,7 @@ async def supply_portfolio(
             nb  = 0.0
             hb  = 0.0
             px  = round(_px_scheduled(om_hour, dt), 1)
-            os_ = round(_os_scheduled(om_hour), 1)
+            os_ = round(_os_scheduled(om_hour, dt), 1)
         total = round(rm + sa + nb + hb + px + os_, 1)
         hourly.append({
             "hour":      om_hour,
