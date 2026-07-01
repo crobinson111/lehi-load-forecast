@@ -1,6 +1,7 @@
 import csv
 import io
 import os
+import re
 import time
 import asyncio
 import logging
@@ -162,6 +163,90 @@ wind_states: dict = {
 }
 
 supply_history: dict = {}  # {date_str: {om_hour (0-23): {nebo, h_butte, px, os}}}
+
+_uamps_cache: dict = {}
+_UAMPS_CACHE_TTL = 1800  # 30 minutes (for today/future dates)
+
+_UAMPS_COLS = {
+    # 0-based index after splitting a data line by whitespace
+    "crsp":      5,
+    "provo_riv": 8,
+    "veyo":      15,
+}
+
+
+def _uamps_fetch_day_sync(user_id: str, password: str, dt: date) -> dict:
+    """Login + fetch one day of UAMPS scheduler log. Returns {hr_1_24: {crsp, provo_riv, veyo}}."""
+    import requests as _req
+    import urllib3 as _u3
+    _u3.disable_warnings()
+
+    BASE = "https://px.uamps.com/cgi-bin/wwiz.asp"
+    sess = _req.Session()
+    sess.headers["User-Agent"] = "Mozilla/5.0"
+    sess.verify = False  # city proxy intercepts SSL; Render won't need this
+
+    r = sess.post(BASE, data={
+        "wwizmstr": "WEB.LOGIN", "WWIZ_FORMNO": "0",
+        "user": user_id, "pwd": password, "Submit": "Submit",
+    }, timeout=30)
+    if "logoff" not in r.text.lower():
+        raise RuntimeError("UAMPS login failed — check UAMPS_USER_ID / UAMPS_PASSWORD")
+
+    r2 = sess.post(BASE, data={
+        "wwizmstr": "WEB.SCHED.LOG.FOR.MBRS", "WWIZ_FORMNO": "0",
+        "Destination": "S",
+        "Year":   str(dt.year)[-2:],
+        "Month":  str(dt.month),
+        "Day":    str(dt.day),
+        "Submit": "Run Report Now",
+    }, timeout=30)
+
+    m = re.search(r'<pre>(.*?)</pre>', r2.text, re.S | re.I)
+    if not m:
+        raise RuntimeError("No <pre> block in UAMPS response")
+
+    pre_text = re.sub(r'<[^>]+>', '\n', m.group(1))
+    # Split at the first long separator (---...) to isolate the kW section only.
+    # The <pre> block also contains an MW fractions section which has the same
+    # hour numbers but floats, causing int() conversion errors.
+    kw_section = re.split(r'-{20,}', pre_text)[0]
+    result: dict = {}
+    for line in kw_section.splitlines():
+        parts = line.split()
+        if not parts or not parts[0].isdigit():
+            continue
+        hr = int(parts[0])
+        if hr < 1 or hr > 24 or len(parts) < 16:
+            continue
+        result[hr] = {key: int(parts[idx]) for key, idx in _UAMPS_COLS.items()}
+    return result
+
+
+async def _uamps_get_day(dt: date) -> dict | None:
+    """Returns {hr_1_24: {crsp, provo_riv, veyo}} or None if credentials not configured."""
+    user_id  = os.getenv("UAMPS_USER_ID", "")
+    password = os.getenv("UAMPS_PASSWORD", "")
+    if not user_id or not password:
+        return None
+
+    date_str = dt.isoformat()
+    today = date.today()
+    cached = _uamps_cache.get(date_str)
+    if cached is not None:
+        ts, data = cached
+        # past dates: never expire; today/future: 30-min TTL
+        if dt < today or time.monotonic() - ts < _UAMPS_CACHE_TTL:
+            return data
+
+    try:
+        data = await asyncio.to_thread(_uamps_fetch_day_sync, user_id, password, dt)
+        _uamps_cache[date_str] = (time.monotonic(), data)
+        logger.info(f"UAMPS fetched {date_str}: {len(data)} hours (CRSP/Provo/Veyo)")
+        return data
+    except Exception as exc:
+        logger.warning(f"UAMPS fetch failed for {date_str}: {exc}")
+        return None
 
 
 def load_plant_data(plant_key: str) -> pd.DataFrame:
@@ -1341,6 +1426,7 @@ async def supply_portfolio(
             pass
 
     supply_day = supply_history.get(target_date, {})
+    uamps_day  = await _uamps_get_day(dt)
 
     hourly = []
     for om_hour in range(24):
@@ -1357,7 +1443,14 @@ async def supply_portfolio(
             hb  = round(horse_butte_kwh.get(om_hour, 0.0), 1)
             px  = round(_px_scheduled(om_hour, dt), 1)
             os_ = round(_os_scheduled(om_hour, dt), 1)
-        total = round(rm + sa + nb + hb + px + os_, 1)
+        if uamps_day:
+            uhr       = uamps_day.get(om_hour + 1, {})
+            crsp      = round(float(uhr.get("crsp",      0)), 1)
+            provo_riv = round(float(uhr.get("provo_riv", 0)), 1)
+            veyo      = round(float(uhr.get("veyo",      0)), 1)
+        else:
+            crsp = provo_riv = veyo = 0.0
+        total = round(rm + sa + nb + hb + px + os_ + crsp + provo_riv + veyo, 1)
         hourly.append({
             "hour":      om_hour,
             "red_mesa":  rm,
@@ -1366,6 +1459,9 @@ async def supply_portfolio(
             "h_butte":   hb,
             "px":        px,
             "os":        os_,
+            "crsp":      crsp,
+            "provo_riv": provo_riv,
+            "veyo":      veyo,
             "total":     total,
             "load":      load_by_hour.get(om_hour),
         })
@@ -1385,6 +1481,7 @@ async def supply_portfolio(
         "hourly": hourly,
         "day_total": day_total,
         "solar_warnings": warnings,
+        "uamps_available": uamps_day is not None,
     }
 
 
