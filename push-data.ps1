@@ -39,7 +39,8 @@ python $fetchScript $excelPath `
     (Join-Path $dataDir "load_weather.csv") `
     (Join-Path $dataDir "solar_weather.csv") `
     (Join-Path $dataDir "steele_a_history.csv") `
-    (Join-Path $dataDir "steele_a_weather.csv")
+    (Join-Path $dataDir "steele_a_weather.csv") `
+    (Join-Path $dataDir "supply_history.csv")
 
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Data export failed."
@@ -53,7 +54,8 @@ $today = Get-Date -Format "yyyy-MM-dd"
 Push-Location $PSScriptRoot
 try {
     git add data/load_history.csv data/red_mesa_history.csv data/load_weather.csv `
-            data/solar_weather.csv data/steele_a_history.csv data/steele_a_weather.csv
+            data/solar_weather.csv data/steele_a_history.csv data/steele_a_weather.csv `
+            data/supply_history.csv
     if ($LASTEXITCODE -ne 0) { throw "git add failed." }
 
     git commit -m "Update load, solar, and weather data $today"

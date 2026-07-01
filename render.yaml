@@ -17,3 +17,5 @@ services:
         value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/solar_weather.csv
       - key: STEELE_A_WEATHER_CSV_URL
         value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/steele_a_weather.csv
+      - key: SUPPLY_HISTORY_CSV_URL
+        value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/supply_history.csv

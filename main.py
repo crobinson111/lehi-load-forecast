@@ -126,6 +126,8 @@ solar_states: dict = {
     for key in SOLAR_PLANTS
 }
 
+supply_history: dict = {}  # {date_str: {om_hour (0-23): {nebo, h_butte, px, os}}}
+
 
 def load_plant_data(plant_key: str) -> pd.DataFrame:
     plant = SOLAR_PLANTS[plant_key]
@@ -162,6 +164,57 @@ def load_plant_data(plant_key: str) -> pd.DataFrame:
     df["kwh"] = pd.to_numeric(df[plant["column"]], errors="coerce").fillna(0)
     df = df[(df["hr"] >= 1) & (df["hr"] <= 24)]
     return df[["date", "hr", "kwh"]]
+
+
+def load_supply_history() -> dict:
+    """Load Nebo, H Butte, PX, OS hourly data. Returns {date: {om_hour: {nebo, h_butte, px, os}}}."""
+    url = os.environ.get("SUPPLY_HISTORY_CSV_URL")
+    if url:
+        resp = httpx.get(url, timeout=30.0)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text))
+    else:
+        try:
+            tmp = tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False)
+            tmp.close()
+            shutil.copy2(EXCEL_PATH, tmp.name)
+        except Exception as exc:
+            raise RuntimeError(f"Could not copy spreadsheet: {exc}")
+        try:
+            df_raw = pd.read_excel(tmp.name, sheet_name="Sch Log Data (2)", engine="openpyxl")
+        finally:
+            os.unlink(tmp.name)
+        df_raw.columns = df_raw.columns.str.strip()
+        df_raw = df_raw.dropna(subset=["Date", "Hr"])
+        df_raw["date"] = (
+            df_raw["Date"].astype(int).astype(str).str.zfill(6)
+            .pipe(lambda s: pd.to_datetime(s, format="%y%m%d"))
+            .dt.strftime("%Y-%m-%d")
+        )
+        df_raw["hr"]      = df_raw["Hr"].astype(int)
+        df_raw["nebo"]    = pd.to_numeric(df_raw["NEBO"]    if "NEBO"    in df_raw.columns else 0, errors="coerce").fillna(0)
+        df_raw["h_butte"] = pd.to_numeric(df_raw["H BUTTE"] if "H BUTTE" in df_raw.columns else 0, errors="coerce").fillna(0)
+        df_raw["px"]      = pd.to_numeric(df_raw["PX"]      if "PX"      in df_raw.columns else 0, errors="coerce").fillna(0)
+        df_raw["os"]      = pd.to_numeric(df_raw["OS"]      if "OS"      in df_raw.columns else 0, errors="coerce").fillna(0)
+        df = df_raw[["date", "hr", "nebo", "h_butte", "px", "os"]].copy()
+
+    df["date"] = df["date"].astype(str)
+    df["hr"]   = df["hr"].astype(int)
+    for col in ["nebo", "h_butte", "px", "os"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    result: dict = {}
+    for _, row in df.iterrows():
+        om_hour = int(row["hr"]) - 1
+        if not (0 <= om_hour <= 23):
+            continue
+        result.setdefault(str(row["date"]), {})[om_hour] = {
+            "nebo":    round(float(row["nebo"]),    1),
+            "h_butte": round(float(row["h_butte"]), 1),
+            "px":      round(float(row["px"]),      1),
+            "os":      round(float(row["os"]),      1),
+        }
+    return result
 
 
 def load_excel_data() -> pd.DataFrame:
@@ -416,6 +469,55 @@ async def train_plant_model(plant_key: str) -> None:
         state["training"] = False
 
 
+def _px_scheduled(om_hour: int, dt: date) -> float:
+    """PX fixed schedule: Mon-Sat in July only."""
+    if dt.month != 7 or dt.weekday() == 6:
+        return 0.0
+    if 7 <= om_hour <= 12:
+        return 38210.0
+    if 13 <= om_hour <= 21:
+        return 47754.0
+    if 22 <= om_hour <= 23:
+        return 38210.0
+    return 0.0
+
+
+def _os_scheduled(om_hour: int) -> float:
+    """OS fixed schedule: every day 8am-11pm (om_hour 8-23)."""
+    return 20000.0 if 8 <= om_hour <= 23 else 0.0
+
+
+async def _plant_hourly_kwh(plant_key: str, target_date: str, dt: date) -> dict:
+    """Returns {om_hour: kwh} for a solar plant. Returns {} if model not ready."""
+    state = solar_states[plant_key]
+    cfg = SOLAR_PLANTS[plant_key]
+    if state["model"] is None:
+        if not state["training"] and state["error"] is None:
+            asyncio.create_task(train_plant_model(plant_key))
+        return {}
+    if target_date in state["history"]:
+        return state["history"][target_date]
+    use_forecast_api = dt >= date.today() - timedelta(days=7)
+    try:
+        weather = await fetch_solar_weather(
+            target_date, target_date, cfg["lat"], cfg["lon"],
+            use_forecast_api=use_forecast_api,
+        )
+        day_wx = weather.get(target_date, {})
+    except Exception:
+        return {}
+    mdl = state["model"]
+    result: dict = {}
+    for om_hour in range(24):
+        wx = day_wx.get(om_hour)
+        if wx is None or wx["ghi"] <= 10:
+            result[om_hour] = 0.0
+        else:
+            pred = float(max(mdl.predict(build_solar_features(om_hour + 1, wx["ghi"], wx["temp_f"], target_date))[0], 0))
+            result[om_hour] = round(pred, 1)
+    return result
+
+
 TRAINING_YEARS = 2  # only use this many recent years for fitting
 
 def build_features(hr_1_to_24: int, temp_f: float, apparent_f: float, date_str: str) -> np.ndarray:
@@ -528,10 +630,20 @@ async def train_model() -> None:
         model_state["training"] = False
 
 
+async def _init_supply() -> None:
+    global supply_history
+    try:
+        supply_history = await asyncio.to_thread(load_supply_history)
+        logger.info(f"Supply history loaded: {len(supply_history)} dates")
+    except Exception as exc:
+        logger.error(f"Failed to load supply history: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(train_model())
-    # Solar model trains on demand (first Red Mesa request) — not at startup
+    asyncio.create_task(_init_supply())
+    # Solar models train on demand (first solar request) — not at startup
     yield
 
 
@@ -827,6 +939,67 @@ async def solar_plant_forecast(
     if fmt == "csv":
         return _solar_to_csv(hourly)
     return {"date": target_date, "plant": plant, "type": "forecast", "hourly": hourly, "summary": summary}
+
+
+@app.get("/api/supply")
+async def supply_portfolio(
+    target_date: str = Query(..., alias="date", description="YYYY-MM-DD"),
+):
+    try:
+        dt = datetime.strptime(target_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+    if dt > date.today() + timedelta(days=16):
+        raise HTTPException(status_code=400, detail="Open-Meteo only forecasts up to 16 days ahead.")
+
+    is_historical = target_date in supply_history
+
+    red_mesa_kwh = await _plant_hourly_kwh("red-mesa", target_date, dt)
+    steele_a_kwh = await _plant_hourly_kwh("steele-a", target_date, dt)
+
+    supply_day = supply_history.get(target_date, {})
+
+    hourly = []
+    for om_hour in range(24):
+        supply = supply_day.get(om_hour, {})
+        rm  = round(red_mesa_kwh.get(om_hour, 0.0), 1)
+        sa  = round(steele_a_kwh.get(om_hour, 0.0), 1)
+        if is_historical:
+            nb  = round(supply.get("nebo",    0.0), 1)
+            hb  = round(supply.get("h_butte", 0.0), 1)
+            px  = round(supply.get("px",      0.0), 1)
+            os_ = round(supply.get("os",      0.0), 1)
+        else:
+            nb  = 0.0
+            hb  = 0.0
+            px  = round(_px_scheduled(om_hour, dt), 1)
+            os_ = round(_os_scheduled(om_hour), 1)
+        total = round(rm + sa + nb + hb + px + os_, 1)
+        hourly.append({
+            "hour":      om_hour,
+            "red_mesa":  rm,
+            "steele_a":  sa,
+            "nebo":      nb,
+            "h_butte":   hb,
+            "px":        px,
+            "os":        os_,
+            "total":     total,
+        })
+
+    solar_warnings = [
+        f"{SOLAR_PLANTS[k]['label']} model not ready"
+        for k in ("red-mesa", "steele-a")
+        if solar_states[k]["model"] is None
+    ]
+
+    day_total = round(sum(h["total"] for h in hourly), 1)
+    return {
+        "date": target_date,
+        "type": "historical" if is_historical else "forecast",
+        "hourly": hourly,
+        "day_total": day_total,
+        "solar_warnings": solar_warnings,
+    }
 
 
 @app.get("/")

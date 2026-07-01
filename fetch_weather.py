@@ -4,13 +4,14 @@ import urllib.parse
 import pandas as pd
 from datetime import datetime
 
-excel_path        = sys.argv[1]
-output_load       = sys.argv[2]
-output_solar      = sys.argv[3]
-output_load_wx    = sys.argv[4]
-output_solar_wx   = sys.argv[5]
-output_steele_a   = sys.argv[6]
+excel_path         = sys.argv[1]
+output_load        = sys.argv[2]
+output_solar       = sys.argv[3]
+output_load_wx     = sys.argv[4]
+output_solar_wx    = sys.argv[5]
+output_steele_a    = sys.argv[6]
 output_steele_a_wx = sys.argv[7]
+output_supply      = sys.argv[8]
 
 # ── Excel export ─────────────────────────────────────────────────────────────
 try:
@@ -168,5 +169,21 @@ for t, ghi, temp in zip(wx_sa["hourly"]["time"],
     })
 pd.DataFrame(rows_sa).to_csv(output_steele_a_wx, index=False)
 print(f"Wrote {len(rows_sa)} Steele A weather rows to {output_steele_a_wx}")
+
+# Supply portfolio history — Nebo, H Butte, PX, OS columns
+df_supply = df.dropna(subset=["Date", "Hr"]).copy()
+df_supply["date"] = (
+    df_supply["Date"].astype(int).astype(str).str.zfill(6)
+    .pipe(lambda s: pd.to_datetime(s, format="%y%m%d"))
+    .dt.strftime("%Y-%m-%d")
+)
+df_supply["hr"]      = df_supply["Hr"].astype(int)
+df_supply["nebo"]    = pd.to_numeric(df_supply["NEBO"]    if "NEBO"    in df_supply.columns else 0, errors="coerce").fillna(0)
+df_supply["h_butte"] = pd.to_numeric(df_supply["H BUTTE"] if "H BUTTE" in df_supply.columns else 0, errors="coerce").fillna(0)
+df_supply["px"]      = pd.to_numeric(df_supply["PX"]      if "PX"      in df_supply.columns else 0, errors="coerce").fillna(0)
+df_supply["os"]      = pd.to_numeric(df_supply["OS"]      if "OS"      in df_supply.columns else 0, errors="coerce").fillna(0)
+df_supply = df_supply[(df_supply["hr"] >= 1) & (df_supply["hr"] <= 24)]
+df_supply[["date", "hr", "nebo", "h_butte", "px", "os"]].to_csv(output_supply, index=False)
+print(f"Wrote {len(df_supply)} supply history rows to {output_supply}")
 
 print("\nDone.")

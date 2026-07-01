@@ -212,6 +212,7 @@
     <button class="tab-btn"        id="tab-btn-accuracy"  onclick="switchTab('accuracy')">Forecast vs Actuals</button>
     <button class="tab-btn"        id="tab-btn-solar-red-mesa"  onclick="switchTab('solar-red-mesa')">Red Mesa Solar</button>
     <button class="tab-btn"        id="tab-btn-solar-steele-a"  onclick="switchTab('solar-steele-a')">Steele A Solar</button>
+    <button class="tab-btn"        id="tab-btn-supply"          onclick="switchTab('supply')">Supply Portfolio</button>
   </div>
 
   <!-- ══════════════════════ TAB 1: FORECAST ══════════════════════ -->
@@ -362,6 +363,47 @@
     </div>
   </div>
 
+  <!-- ══════════════════════ TAB 5: SUPPLY PORTFOLIO ══════════════════════ -->
+  <div id="tab-supply" class="hidden">
+    <div class="controls">
+      <div class="field">
+        <label for="supply-date">Date</label>
+        <input type="date" id="supply-date" />
+      </div>
+      <button class="btn-primary" id="supply-btn" onclick="getSupply()">Get Supply Portfolio</button>
+    </div>
+    <div id="supply-msg" class="hidden message"></div>
+    <div id="supply-results" class="hidden">
+      <div class="cards">
+        <div class="card avg">
+          <div class="card-label">Total Daily Generation</div>
+          <div class="card-value" id="supply-day-total">—<span class="card-unit">kWh</span></div>
+        </div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-title" id="supply-chart-title">Supply Portfolio</div>
+        <div id="supply-warnings" class="hidden message info" style="margin-bottom:.75rem; margin-top:0"></div>
+        <div style="overflow-x:auto">
+          <table class="data-table" style="min-width:640px">
+            <thead>
+              <tr>
+                <th>Hour</th>
+                <th>Red Mesa</th>
+                <th>Steele A</th>
+                <th>Nebo</th>
+                <th>Horse Butte</th>
+                <th>PX</th>
+                <th>OS</th>
+                <th style="border-left:2px solid #e2e8f0">Total</th>
+              </tr>
+            </thead>
+            <tbody id="supply-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <script>
@@ -377,11 +419,12 @@
   document.getElementById("acc-date-input").max   = yesterdayStr;
   document.getElementById("solar-red-mesa-date").value  = todayStr;
   document.getElementById("solar-steele-a-date").value  = todayStr;
+  document.getElementById("supply-date").value           = todayStr;
 
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["forecast", "accuracy", "solar-red-mesa", "solar-steele-a"].forEach(t => {
+    ["forecast", "accuracy", "solar-red-mesa", "solar-steele-a", "supply"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -711,6 +754,84 @@
     });
 
     document.getElementById(`${p}-results`).classList.remove("hidden");
+  }
+
+  // ── Tab 5: Supply Portfolio ───────────────────────────────────────────
+
+  async function getSupply() {
+    const dateVal = document.getElementById("supply-date").value;
+    const msgEl   = document.getElementById("supply-msg");
+    const btn     = document.getElementById("supply-btn");
+    const showM   = (t, type="error") => { msgEl.textContent = t; msgEl.className = `message ${type}`; msgEl.classList.remove("hidden"); };
+    const hideM   = () => msgEl.classList.add("hidden");
+
+    if (!dateVal) { showM("Please select a date."); return; }
+    hideM();
+    btn.disabled = true;
+    document.getElementById("supply-results").classList.add("hidden");
+    showM("Fetching supply portfolio…", "info");
+    try {
+      const res  = await fetch(`/api/supply?date=${dateVal}`);
+      const data = await res.json();
+      if (!res.ok) { showM(data.detail ?? "Supply fetch failed."); return; }
+      hideM();
+      renderSupply(data);
+    } catch (e) {
+      showM("Network error: " + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderSupply(data) {
+    const isHistorical = data.type === "historical";
+    document.getElementById("supply-chart-title").textContent =
+      `Supply Portfolio — ${data.date} (${isHistorical ? "Historical" : "Forecast"})`;
+    document.getElementById("supply-day-total").innerHTML =
+      `${data.day_total != null ? Math.round(data.day_total).toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
+
+    const warnEl = document.getElementById("supply-warnings");
+    if (data.solar_warnings && data.solar_warnings.length > 0) {
+      warnEl.textContent = "Note: " + data.solar_warnings.join("; ") + " — solar values shown as 0. Open those tabs to train models.";
+      warnEl.classList.remove("hidden");
+    } else {
+      warnEl.classList.add("hidden");
+    }
+
+    const tbody = document.getElementById("supply-tbody");
+    tbody.innerHTML = "";
+    const tot = { red_mesa: 0, steele_a: 0, nebo: 0, h_butte: 0, px: 0, os: 0, total: 0 };
+
+    data.hourly.forEach(h => {
+      tot.red_mesa  += h.red_mesa;
+      tot.steele_a  += h.steele_a;
+      tot.nebo      += h.nebo;
+      tot.h_butte   += h.h_butte;
+      tot.px        += h.px;
+      tot.os        += h.os;
+      tot.total     += h.total;
+
+      const cell = v => `<td>${v ? Math.round(v).toLocaleString() : "—"}</td>`;
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        `<td>${fmt12(h.hour)}</td>` +
+        cell(h.red_mesa) + cell(h.steele_a) + cell(h.nebo) + cell(h.h_butte) +
+        cell(h.px) + cell(h.os) +
+        `<td style="border-left:2px solid #e2e8f0;font-weight:600">${Math.round(h.total).toLocaleString()}</td>`;
+      tbody.appendChild(tr);
+    });
+
+    const trT = document.createElement("tr");
+    trT.style.cssText = "font-weight:700;background:#f7fafc;border-top:2px solid #cbd5e0";
+    const totCell = v => `<td>${Math.round(v).toLocaleString()}</td>`;
+    trT.innerHTML =
+      `<td style="font-weight:700">Daily Total</td>` +
+      totCell(tot.red_mesa) + totCell(tot.steele_a) + totCell(tot.nebo) + totCell(tot.h_butte) +
+      totCell(tot.px) + totCell(tot.os) +
+      `<td style="border-left:2px solid #e2e8f0;font-weight:700">${Math.round(tot.total).toLocaleString()}</td>`;
+    tbody.appendChild(trT);
+
+    document.getElementById("supply-results").classList.remove("hidden");
   }
 
   // ── Init ──────────────────────────────────────────────────────────────
