@@ -442,7 +442,7 @@
         <input type="date" id="supply-date" />
       </div>
       <button class="btn-primary" id="supply-btn" onclick="getSupply()">Get Supply Portfolio</button>
-      <button class="btn-secondary" onclick="pushToGenSch()" title="Copy current GEN schedule to Gen Sch tab">Copy to Gen Sch →</button>
+      <button class="btn-secondary" id="supply-load-sch-btn" onclick="loadScheduleToGenSch()" title="Commit this GEN schedule to Gen Sch tab">Load Schedule</button>
     </div>
     <div id="supply-msg" class="hidden message"></div>
     <div id="supply-results" class="hidden">
@@ -486,16 +486,12 @@
 
   <!-- ══════════════════════ TAB 7: GEN SCHEDULE ══════════════════════ -->
   <div id="tab-gen-sch" class="hidden">
-    <div class="controls">
-      <div class="field">
-        <label for="gen-sch-date-input">Add Date</label>
-        <input type="date" id="gen-sch-date-input" />
-      </div>
-      <button class="btn-primary" onclick="addGenSchDate(document.getElementById('gen-sch-date-input').value)">Add Date</button>
-      <button class="btn-secondary" id="gen-sch-load-btn" onclick="loadGenSch()">Load Schedule</button>
+    <div class="controls" style="align-items:center">
+      <span style="font-size:.9rem;color:#4a5568">Schedules loaded from Supply Portfolio</span>
+      <button class="btn-secondary" onclick="loadGenSch()">↻ Refresh</button>
     </div>
     <div id="gen-sch-chips" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.25rem;min-height:1rem"></div>
-    <div id="gen-sch-msg" class="message info hidden">Add at least one date above and click Load Schedule.</div>
+    <div id="gen-sch-msg" class="message info hidden">No schedules loaded yet. Use "Load Schedule" on the Supply Portfolio tab.</div>
     <div id="gen-sch-results" class="hidden">
       <div class="chart-wrap">
         <div class="chart-title" id="gen-sch-title">Generation Schedule</div>
@@ -537,6 +533,7 @@
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
+    if (name === "gen-sch") loadGenSch();
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────
@@ -1150,17 +1147,30 @@
 
   // ── Tab 7: Gen Schedule ───────────────────────────────────────────────
 
-  let _genSchDates = [];
+  function _getLoadedDates() {
+    try { return JSON.parse(localStorage.getItem("lehi_gen_sch_dates") || "[]"); }
+    catch { return []; }
+  }
+  function _saveLoadedDates(dates) {
+    localStorage.setItem("lehi_gen_sch_dates", JSON.stringify(dates));
+  }
+  function _loadGenLoaded(dateStr) {
+    try { return JSON.parse(localStorage.getItem("lehi_gen_loaded_" + dateStr) || "{}"); }
+    catch { return {}; }
+  }
+  function _saveGenLoaded(dateStr, vals) {
+    localStorage.setItem("lehi_gen_loaded_" + dateStr, JSON.stringify(vals));
+  }
 
   function _genSchFmtDate(d) {
     const dt = new Date(d + "T12:00:00");
     return dt.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
   }
 
-  function _renderGenSchChips() {
+  function _renderGenSchChips(dates) {
     const el = document.getElementById("gen-sch-chips");
     el.innerHTML = "";
-    _genSchDates.forEach(d => {
+    dates.forEach(d => {
       const chip = document.createElement("span");
       chip.className = "date-chip";
       chip.innerHTML =
@@ -1169,37 +1179,24 @@
     });
   }
 
-  function addGenSchDate(dateStr) {
-    if (!dateStr) return;
-    if (!_genSchDates.includes(dateStr)) {
-      _genSchDates.push(dateStr);
-      _genSchDates.sort();
-      _renderGenSchChips();
-    }
-    document.getElementById("gen-sch-date-input").value = "";
-  }
-
   function removeGenSchDate(dateStr) {
-    _genSchDates = _genSchDates.filter(d => d !== dateStr);
-    _renderGenSchChips();
-    if (_genSchDates.length === 0) {
-      document.getElementById("gen-sch-results").classList.add("hidden");
-      document.getElementById("gen-sch-msg").classList.remove("hidden");
-    } else {
-      loadGenSch();
-    }
+    const dates = _getLoadedDates().filter(d => d !== dateStr);
+    _saveLoadedDates(dates);
+    loadGenSch();
   }
 
   function loadGenSch() {
-    const msgEl = document.getElementById("gen-sch-msg");
-    if (_genSchDates.length === 0) {
+    const dates  = _getLoadedDates();
+    const msgEl  = document.getElementById("gen-sch-msg");
+    _renderGenSchChips(dates);
+    if (dates.length === 0) {
       msgEl.classList.remove("hidden");
       document.getElementById("gen-sch-results").classList.add("hidden");
       return;
     }
     msgEl.classList.add("hidden");
 
-    const sorted = [..._genSchDates].sort();
+    const sorted = [...dates].sort();
     document.getElementById("gen-sch-title").textContent =
       "Generation Schedule — " + sorted.map(_genSchFmtDate).join(", ");
 
@@ -1216,7 +1213,7 @@
       const tr = document.createElement("tr");
       let cols = `<td>${fmt12(hr)}</td><td>${hr + 1}</td>`;
       sorted.forEach(d => {
-        const gen = _loadGen(d);
+        const gen = _loadGenLoaded(d);
         const val = gen[hr] || 0;
         cols += `<td style="text-align:right">${val ? Math.round(val).toLocaleString() : "—"}</td>`;
       });
@@ -1228,7 +1225,7 @@
     trT.style.cssText = "font-weight:700;background:#f7fafc";
     let totCols = `<td>Daily Total</td><td></td>`;
     sorted.forEach(d => {
-      const gen = _loadGen(d);
+      const gen = _loadGenLoaded(d);
       const tot = Object.values(gen).reduce((s, v) => s + (parseFloat(v) || 0), 0);
       totCols += `<td style="text-align:right">${tot ? Math.round(tot).toLocaleString() : "—"}</td>`;
     });
@@ -1238,11 +1235,22 @@
     document.getElementById("gen-sch-results").classList.remove("hidden");
   }
 
-  function pushToGenSch() {
+  function loadScheduleToGenSch() {
     if (!_supplyData) return;
-    switchTab("gen-sch");
-    addGenSchDate(_supplyData.date);
-    loadGenSch();
+    _saveGenLoaded(_supplyData.date, _supplyGen);
+    const dates = _getLoadedDates();
+    if (!dates.includes(_supplyData.date)) {
+      dates.push(_supplyData.date);
+      dates.sort();
+      _saveLoadedDates(dates);
+    } else {
+      _saveLoadedDates(dates);
+    }
+    const btn = document.getElementById("supply-load-sch-btn");
+    const orig = btn.textContent;
+    btn.textContent = "Loaded!";
+    btn.disabled = true;
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
   }
 
   // ── Init ──────────────────────────────────────────────────────────────
