@@ -483,9 +483,9 @@ def _px_scheduled(om_hour: int, dt: date) -> float:
         return 0.0
     if 7 <= om_hour <= 12:
         return 38210.0
-    if 13 <= om_hour <= 21:
+    if 13 <= om_hour <= 20:
         return 47754.0
-    if 22 <= om_hour <= 23:
+    if 21 <= om_hour <= 22:
         return 38210.0
     return 0.0
 
