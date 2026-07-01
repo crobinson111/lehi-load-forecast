@@ -183,6 +183,17 @@
     .message.info  { background: #ebf8ff; border: 1px solid #bee3f8; color: #2b6cb0; }
 
     .hidden { display: none !important; }
+
+    /* GEN editable input inside supply table */
+    .gen-input {
+      width: 72px; padding: 2px 4px;
+      border: 1px solid #cbd5e0; border-radius: 4px;
+      font-size: .85rem; text-align: right; background: #fff;
+    }
+    .gen-input:focus { outline: none; border-color: #4299e1; box-shadow: 0 0 0 2px rgba(66,153,225,.3); }
+    .gen-input::-webkit-inner-spin-button,
+    .gen-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    .gen-input[type=number] { -moz-appearance: textfield; }
   </style>
 </head>
 <body>
@@ -426,6 +437,7 @@
                 <th>CRSP</th>
                 <th>Provo River</th>
                 <th>Veyo</th>
+                <th style="border-left:2px solid #e2e8f0">GEN</th>
                 <th style="border-left:2px solid #e2e8f0">Total</th>
                 <th style="border-left:2px solid #fed7d7;color:#c53030">Load</th>
                 <th style="border-left:2px solid #e2e8f0">Diff</th>
@@ -441,9 +453,11 @@
 </main>
 
 <script>
-  let chart       = null;
-  let accChart    = null;
-  let supplyChart = null;
+  let chart        = null;
+  let accChart     = null;
+  let supplyChart  = null;
+  let _supplyData  = null;
+  let _supplyGen   = {};
   const solarCharts = {};
 
   const today = new Date();
@@ -890,6 +904,52 @@
 
   // ── Tab 6: Supply Portfolio ───────────────────────────────────────────
 
+  function _loadGen(dateStr) {
+    try { return JSON.parse(localStorage.getItem("lehi_gen_" + dateStr) || "{}"); }
+    catch { return {}; }
+  }
+  function _saveGen(dateStr, vals) {
+    localStorage.setItem("lehi_gen_" + dateStr, JSON.stringify(vals));
+  }
+
+  function _onGenInput(hour, rawVal) {
+    const gen = parseFloat(rawVal) || 0;
+    _supplyGen[hour] = gen;
+    _saveGen(_supplyData.date, _supplyGen);
+    const h      = _supplyData.hourly[hour];
+    const newTot = h.total + gen;
+    document.getElementById("sply-tot-" + hour).textContent = Math.round(newTot).toLocaleString();
+    const difEl = document.getElementById("sply-dif-" + hour);
+    if (h.load != null) {
+      const d = Math.round(h.load - newTot);
+      difEl.textContent = d.toLocaleString();
+      difEl.style.color = d > 0 ? "#c53030" : "#276749";
+    }
+    _updateSupplyTotals();
+  }
+
+  function _updateSupplyTotals() {
+    if (!_supplyData) return;
+    let rm=0, sa=0, nb=0, hb=0, px=0, os=0, cr=0, pr=0, vy=0, gen=0, tot=0, load=0, lc=0;
+    _supplyData.hourly.forEach(h => {
+      rm += h.red_mesa; sa += h.steele_a; nb += h.nebo; hb += h.h_butte;
+      px += h.px; os += h.os; cr += h.crsp ?? 0; pr += h.provo_riv ?? 0; vy += h.veyo ?? 0;
+      const g = _supplyGen[h.hour] || 0;
+      gen += g; tot += h.total + g;
+      if (h.load != null) { load += h.load; lc++; }
+    });
+    const td = lc ? Math.round(load - tot) : null;
+    const ds = td == null ? "" : td > 0 ? "color:#c53030" : "color:#276749";
+    const tc = v => `<td>${Math.round(v).toLocaleString()}</td>`;
+    document.getElementById("sply-tot-row").innerHTML =
+      `<td>Daily Total</td>` +
+      tc(rm) + tc(sa) + tc(nb) + tc(hb) + tc(px) + tc(os) + tc(cr) + tc(pr) + tc(vy) +
+      `<td style="border-left:2px solid #e2e8f0">${Math.round(gen).toLocaleString()}</td>` +
+      `<td style="border-left:2px solid #e2e8f0;font-weight:600">${Math.round(tot).toLocaleString()}</td>` +
+      `<td style="border-left:2px solid #fed7d7;color:#c53030">${lc ? Math.round(load).toLocaleString() : "—"}</td>` +
+      `<td style="border-left:2px solid #e2e8f0;${ds}">${td != null ? td.toLocaleString() : "—"}</td>`;
+  }
+
   async function getSupply() {
     const dateVal = document.getElementById("supply-date").value;
     const msgEl   = document.getElementById("supply-msg");
@@ -982,51 +1042,42 @@
       },
     });
 
+    _supplyData = data;
+    _supplyGen  = _loadGen(data.date);
+
     const tbody = document.getElementById("supply-tbody");
     tbody.innerHTML = "";
-    const tot = { red_mesa: 0, steele_a: 0, nebo: 0, h_butte: 0, px: 0, os: 0, crsp: 0, provo_riv: 0, veyo: 0, total: 0, load: 0 };
-    let loadCount = 0;
+    const cell = v => `<td>${v ? Math.round(v).toLocaleString() : "—"}</td>`;
 
     data.hourly.forEach(h => {
-      tot.red_mesa  += h.red_mesa;
-      tot.steele_a  += h.steele_a;
-      tot.nebo      += h.nebo;
-      tot.h_butte   += h.h_butte;
-      tot.px        += h.px;
-      tot.os        += h.os;
-      tot.crsp      += h.crsp      ?? 0;
-      tot.provo_riv += h.provo_riv ?? 0;
-      tot.veyo      += h.veyo      ?? 0;
-      tot.total     += h.total;
-      if (h.load != null) { tot.load += h.load; loadCount++; }
-
-      const cell = v => `<td>${v ? Math.round(v).toLocaleString() : "—"}</td>`;
-      const diff = h.load != null ? Math.round(h.load - h.total) : null;
+      const gen      = _supplyGen[h.hour] || 0;
+      const rowTotal = h.total + gen;
+      const diff     = h.load != null ? Math.round(h.load - rowTotal) : null;
       const diffStyle = diff == null ? "" : diff > 0 ? "color:#c53030" : "color:#276749";
+
       const tr = document.createElement("tr");
       tr.innerHTML =
         `<td>${fmt12(h.hour)}</td>` +
         cell(h.red_mesa) + cell(h.steele_a) + cell(h.nebo) + cell(h.h_butte) +
         cell(h.px) + cell(h.os) + cell(h.crsp) + cell(h.provo_riv) + cell(h.veyo) +
-        `<td style="border-left:2px solid #e2e8f0;font-weight:600">${Math.round(h.total).toLocaleString()}</td>` +
+        `<td style="border-left:2px solid #e2e8f0;padding:3px 6px" class="gen-td-${h.hour}"></td>` +
+        `<td id="sply-tot-${h.hour}" style="border-left:2px solid #e2e8f0;font-weight:600">${Math.round(rowTotal).toLocaleString()}</td>` +
         `<td style="border-left:2px solid #fed7d7;color:#c53030">${h.load != null ? Math.round(h.load).toLocaleString() : "—"}</td>` +
-        `<td style="border-left:2px solid #e2e8f0;${diffStyle}">${diff != null ? diff.toLocaleString() : "—"}</td>`;
+        `<td id="sply-dif-${h.hour}" style="border-left:2px solid #e2e8f0;${diffStyle}">${diff != null ? diff.toLocaleString() : "—"}</td>`;
+
+      const inp = document.createElement("input");
+      inp.type = "number"; inp.className = "gen-input";
+      inp.value = gen || ""; inp.placeholder = "0";
+      inp.addEventListener("input", () => _onGenInput(h.hour, inp.value));
+      tr.querySelector(`.gen-td-${h.hour}`).appendChild(inp);
       tbody.appendChild(tr);
     });
 
     const trT = document.createElement("tr");
+    trT.id = "sply-tot-row";
     trT.style.cssText = "font-weight:700;background:#f7fafc";
-    const totCell = v => `<td>${Math.round(v).toLocaleString()}</td>`;
-    const totDiff = loadCount ? Math.round(tot.load - tot.total) : null;
-    const totDiffStyle = totDiff == null ? "" : totDiff > 0 ? "color:#c53030" : "color:#276749";
-    trT.innerHTML =
-      `<td>Daily Total</td>` +
-      totCell(tot.red_mesa) + totCell(tot.steele_a) + totCell(tot.nebo) + totCell(tot.h_butte) +
-      totCell(tot.px) + totCell(tot.os) + totCell(tot.crsp) + totCell(tot.provo_riv) + totCell(tot.veyo) +
-      `<td style="border-left:2px solid #e2e8f0">${Math.round(tot.total).toLocaleString()}</td>` +
-      `<td style="border-left:2px solid #fed7d7;color:#c53030">${loadCount ? Math.round(tot.load).toLocaleString() : "—"}</td>` +
-      `<td style="border-left:2px solid #e2e8f0;${totDiffStyle}">${totDiff != null ? totDiff.toLocaleString() : "—"}</td>`;
     tbody.appendChild(trT);
+    _updateSupplyTotals();
 
     document.getElementById("supply-results").classList.remove("hidden");
   }
