@@ -486,8 +486,12 @@
 
   <!-- ══════════════════════ TAB 7: GEN SCHEDULE ══════════════════════ -->
   <div id="tab-gen-sch" class="hidden">
-    <div class="controls" style="align-items:center">
-      <span style="font-size:.9rem;color:#4a5568">Schedules loaded from Supply Portfolio</span>
+    <div class="controls">
+      <div class="field">
+        <label for="gen-sch-date-input">Add Date</label>
+        <input type="date" id="gen-sch-date-input" />
+      </div>
+      <button class="btn-primary" onclick="addGenSchDate(document.getElementById('gen-sch-date-input').value)">Add Date</button>
       <button class="btn-secondary" onclick="loadGenSch()">↻ Refresh</button>
     </div>
     <div id="gen-sch-chips" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.25rem;min-height:1rem"></div>
@@ -1177,6 +1181,18 @@
         `${_genSchFmtDate(d)} <button class="chip-rm" onclick="removeGenSchDate('${d}')" title="Remove">×</button>`;
       el.appendChild(chip);
     });
+  }
+
+  function addGenSchDate(dateStr) {
+    if (!dateStr) return;
+    const dates = _getLoadedDates();
+    if (!dates.includes(dateStr)) {
+      dates.push(dateStr);
+      dates.sort();
+      _saveLoadedDates(dates);
+    }
+    document.getElementById("gen-sch-date-input").value = "";
+    loadGenSch();
   }
 
   function removeGenSchDate(dateStr) {
