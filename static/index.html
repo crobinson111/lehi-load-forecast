@@ -922,8 +922,10 @@
       `${data.day_total != null ? Math.round(data.day_total).toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
 
     const warnEl = document.getElementById("supply-warnings");
-    if (data.solar_warnings && data.solar_warnings.length > 0) {
-      warnEl.textContent = "Note: " + data.solar_warnings.join("; ") + " — solar values shown as 0. Open those tabs to train models.";
+    const warns = [...(data.solar_warnings ?? [])];
+    if (!data.uamps_available) warns.push("UAMPS credentials not configured — CRSP, Provo River, Veyo shown as 0");
+    if (warns.length > 0) {
+      warnEl.textContent = "Note: " + warns.join("; ") + (data.solar_warnings?.length ? " — open those tabs to train models." : "");
       warnEl.classList.remove("hidden");
     } else {
       warnEl.classList.add("hidden");
