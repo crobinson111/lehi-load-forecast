@@ -184,6 +184,16 @@
 
     .hidden { display: none !important; }
 
+    /* Sticky Hour + HE columns in supply table */
+    #supply-table th:nth-child(1),
+    #supply-table th:nth-child(2) { position: sticky; z-index: 2; }
+    #supply-table td:nth-child(1),
+    #supply-table td:nth-child(2) { position: sticky; z-index: 1; background: #fff; }
+    #sply-tot-row td:nth-child(1),
+    #sply-tot-row td:nth-child(2) { background: #f7fafc; }
+    #supply-table th:nth-child(1), #supply-table td:nth-child(1) { left: 0; }
+    #supply-table th:nth-child(2), #supply-table td:nth-child(2) { left: 72px; box-shadow: 2px 0 4px rgba(0,0,0,.07); }
+
     /* GEN editable input inside supply table */
     .gen-input {
       width: 72px; padding: 2px 4px;
@@ -424,7 +434,7 @@
         <div id="supply-warnings" class="hidden message info" style="margin-bottom:.75rem; margin-top:0"></div>
         <div class="chart-container" style="margin-bottom:1.25rem"><canvas id="supply-chart"></canvas></div>
         <div style="overflow-x:auto">
-          <table class="data-table" style="min-width:720px">
+          <table class="data-table" id="supply-table" style="min-width:720px">
             <thead>
               <tr>
                 <th>Hour</th>
