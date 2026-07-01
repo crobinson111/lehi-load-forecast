@@ -967,6 +967,24 @@ async def supply_portfolio(
     red_mesa_kwh = await _plant_hourly_kwh("red-mesa", target_date, dt)
     steele_a_kwh = await _plant_hourly_kwh("steele-a", target_date, dt)
 
+    # Load — actuals if in history, otherwise model forecast
+    load_by_hour: dict = {}
+    if target_date in model_state["history"]:
+        load_by_hour = model_state["history"][target_date]
+    elif model_state["model"] is not None:
+        try:
+            use_load_fc = dt >= date.today() - timedelta(days=7)
+            wx_load = await fetch_weather(target_date, target_date, use_forecast_api=use_load_fc)
+            day_wx_load = wx_load.get(target_date, {})
+            mdl = model_state["model"]
+            for om_hour in range(24):
+                w = day_wx_load.get(om_hour)
+                if w:
+                    pred = float(max(mdl.predict(build_features(om_hour + 1, w["temp_f"], w["apparent_f"], target_date))[0], 0))
+                    load_by_hour[om_hour] = round(pred, 1)
+        except Exception:
+            pass
+
     supply_day = supply_history.get(target_date, {})
 
     hourly = []
@@ -994,6 +1012,7 @@ async def supply_portfolio(
             "px":        px,
             "os":        os_,
             "total":     total,
+            "load":      load_by_hour.get(om_hour),
         })
 
     solar_warnings = [
