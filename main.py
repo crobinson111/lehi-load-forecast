@@ -164,9 +164,10 @@ wind_states: dict = {
 }
 
 supply_history: dict = {}  # {date_str: {om_hour (0-23): {nebo, h_butte, px, os}}}
+uamps_schedule: dict = {}  # {date_str: {hr_1_24: {crsp, provo_riv, veyo}}} loaded from CSV
 
 _uamps_cache: dict = {}
-_UAMPS_CACHE_TTL = 1800  # 30 minutes (for today/future dates)
+_UAMPS_CACHE_TTL = 1800  # 30 minutes (for today/future dates — live fetch fallback)
 
 _UAMPS_COLS = {
     # 0-based index after splitting a data line by whitespace
@@ -224,29 +225,62 @@ def _uamps_fetch_day_sync(user_id: str, password: str, dt: date) -> dict:
     return result
 
 
+def load_uamps_schedule() -> dict:
+    """Load UAMPS schedule CSV. Returns {date_str: {hr_1_24: {crsp, provo_riv, veyo}}}."""
+    url = os.environ.get("UAMPS_SCHEDULE_CSV_URL")
+    if not url:
+        return {}
+    try:
+        resp = httpx.get(url, timeout=30.0)
+        resp.raise_for_status()
+        df = pd.read_csv(io.StringIO(resp.text))
+        df["date"] = df["date"].astype(str)
+        df["hr"]   = df["hr"].astype(int)
+        for col in ("crsp", "provo_riv", "veyo"):
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+        result: dict = {}
+        for _, row in df.iterrows():
+            result.setdefault(str(row["date"]), {})[int(row["hr"])] = {
+                "crsp":      int(row["crsp"]),
+                "provo_riv": int(row["provo_riv"]),
+                "veyo":      int(row["veyo"]),
+            }
+        logger.info(f"Loaded UAMPS schedule: {len(df)} rows ({df['date'].min()} to {df['date'].max()})")
+        return result
+    except Exception as exc:
+        logger.warning(f"Could not load UAMPS schedule CSV: {exc}")
+        return {}
+
+
 async def _uamps_get_day(dt: date) -> dict | None:
-    """Returns {hr_1_24: {crsp, provo_riv, veyo}} or None if credentials not configured."""
+    """Returns {hr_1_24: {crsp, provo_riv, veyo}} or None if unavailable.
+    Prefers the pre-committed CSV; falls back to live fetch if credentials present."""
+    date_str = dt.isoformat()
+
+    # 1. CSV (always available on Render)
+    if date_str in uamps_schedule:
+        return uamps_schedule[date_str]
+
+    # 2. Live fetch (works locally, blocked on Render)
     user_id  = os.getenv("UAMPS_USER_ID", "")
     password = os.getenv("UAMPS_PASSWORD", "")
     if not user_id or not password:
         return None
 
-    date_str = dt.isoformat()
-    today = date.today()
+    today  = date.today()
     cached = _uamps_cache.get(date_str)
     if cached is not None:
         ts, data = cached
-        # past dates: never expire; today/future: 30-min TTL
         if dt < today or time.monotonic() - ts < _UAMPS_CACHE_TTL:
             return data
 
     try:
         data = await asyncio.to_thread(_uamps_fetch_day_sync, user_id, password, dt)
         _uamps_cache[date_str] = (time.monotonic(), data)
-        logger.info(f"UAMPS fetched {date_str}: {len(data)} hours (CRSP/Provo/Veyo)")
+        logger.info(f"UAMPS live fetch {date_str}: {len(data)} hours")
         return data
     except Exception as exc:
-        logger.warning(f"UAMPS fetch failed for {date_str}: {exc}")
+        logger.warning(f"UAMPS live fetch failed for {date_str}: {exc}")
         return None
 
 
@@ -969,12 +1003,16 @@ async def train_model() -> None:
 
 
 async def _init_supply() -> None:
-    global supply_history
+    global supply_history, uamps_schedule
     try:
         supply_history = await asyncio.to_thread(load_supply_history)
         logger.info(f"Supply history loaded: {len(supply_history)} dates")
     except Exception as exc:
         logger.error(f"Failed to load supply history: {exc}")
+    try:
+        uamps_schedule = await asyncio.to_thread(load_uamps_schedule)
+    except Exception as exc:
+        logger.error(f"Failed to load UAMPS schedule: {exc}")
 
 
 @asynccontextmanager

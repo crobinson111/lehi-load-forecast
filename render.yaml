@@ -21,3 +21,5 @@ services:
         value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/supply_history.csv
       - key: H_BUTTE_WEATHER_CSV_URL
         value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/h_butte_weather.csv
+      - key: UAMPS_SCHEDULE_CSV_URL
+        value: https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/uamps_schedule.csv
