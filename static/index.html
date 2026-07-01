@@ -428,6 +428,7 @@
                 <th>Veyo</th>
                 <th style="border-left:2px solid #e2e8f0">Total</th>
                 <th style="border-left:2px solid #fed7d7;color:#c53030">Load</th>
+                <th style="border-left:2px solid #e2e8f0">Diff</th>
               </tr>
             </thead>
             <tbody id="supply-tbody"></tbody>
@@ -1000,25 +1001,31 @@
       if (h.load != null) { tot.load += h.load; loadCount++; }
 
       const cell = v => `<td>${v ? Math.round(v).toLocaleString() : "—"}</td>`;
+      const diff = h.load != null ? Math.round(h.load - h.total) : null;
+      const diffStyle = diff == null ? "" : diff > 0 ? "color:#c53030" : "color:#276749";
       const tr = document.createElement("tr");
       tr.innerHTML =
         `<td>${fmt12(h.hour)}</td>` +
         cell(h.red_mesa) + cell(h.steele_a) + cell(h.nebo) + cell(h.h_butte) +
         cell(h.px) + cell(h.os) + cell(h.crsp) + cell(h.provo_riv) + cell(h.veyo) +
         `<td style="border-left:2px solid #e2e8f0;font-weight:600">${Math.round(h.total).toLocaleString()}</td>` +
-        `<td style="border-left:2px solid #fed7d7;color:#c53030">${h.load != null ? Math.round(h.load).toLocaleString() : "—"}</td>`;
+        `<td style="border-left:2px solid #fed7d7;color:#c53030">${h.load != null ? Math.round(h.load).toLocaleString() : "—"}</td>` +
+        `<td style="border-left:2px solid #e2e8f0;${diffStyle}">${diff != null ? diff.toLocaleString() : "—"}</td>`;
       tbody.appendChild(tr);
     });
 
     const trT = document.createElement("tr");
     trT.style.cssText = "font-weight:700;background:#f7fafc";
     const totCell = v => `<td>${Math.round(v).toLocaleString()}</td>`;
+    const totDiff = loadCount ? Math.round(tot.load - tot.total) : null;
+    const totDiffStyle = totDiff == null ? "" : totDiff > 0 ? "color:#c53030" : "color:#276749";
     trT.innerHTML =
       `<td>Daily Total</td>` +
       totCell(tot.red_mesa) + totCell(tot.steele_a) + totCell(tot.nebo) + totCell(tot.h_butte) +
       totCell(tot.px) + totCell(tot.os) + totCell(tot.crsp) + totCell(tot.provo_riv) + totCell(tot.veyo) +
       `<td style="border-left:2px solid #e2e8f0">${Math.round(tot.total).toLocaleString()}</td>` +
-      `<td style="border-left:2px solid #fed7d7;color:#c53030">${loadCount ? Math.round(tot.load).toLocaleString() : "—"}</td>`;
+      `<td style="border-left:2px solid #fed7d7;color:#c53030">${loadCount ? Math.round(tot.load).toLocaleString() : "—"}</td>` +
+      `<td style="border-left:2px solid #e2e8f0;${totDiffStyle}">${totDiff != null ? totDiff.toLocaleString() : "—"}</td>`;
     tbody.appendChild(trT);
 
     document.getElementById("supply-results").classList.remove("hidden");
