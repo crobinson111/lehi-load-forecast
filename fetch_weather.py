@@ -4,11 +4,13 @@ import urllib.parse
 import pandas as pd
 from datetime import datetime
 
-excel_path      = sys.argv[1]
-output_load     = sys.argv[2]
-output_solar    = sys.argv[3]
-output_load_wx  = sys.argv[4]
-output_solar_wx = sys.argv[5]
+excel_path        = sys.argv[1]
+output_load       = sys.argv[2]
+output_solar      = sys.argv[3]
+output_load_wx    = sys.argv[4]
+output_solar_wx   = sys.argv[5]
+output_steele_a   = sys.argv[6]
+output_steele_a_wx = sys.argv[7]
 
 # ── Excel export ─────────────────────────────────────────────────────────────
 try:
@@ -129,5 +131,42 @@ for t, ghi, temp in zip(wx_s["hourly"]["time"],
     })
 pd.DataFrame(rows_s).to_csv(output_solar_wx, index=False)
 print(f"Wrote {len(rows_s)} solar weather rows to {output_solar_wx}")
+
+time.sleep(5)
+
+# Steele A history — "Steel A" column
+df_steele = df.dropna(subset=["Date", "Hr"]).copy()
+df_steele["date"] = (
+    df_steele["Date"].astype(int).astype(str).str.zfill(6)
+    .pipe(lambda s: pd.to_datetime(s, format="%y%m%d"))
+    .dt.strftime("%Y-%m-%d")
+)
+df_steele["hr"]  = df_steele["Hr"].astype(int)
+df_steele["kwh"] = pd.to_numeric(df_steele["Steel A"], errors="coerce").fillna(0)
+df_steele = df_steele[(df_steele["hr"] >= 1) & (df_steele["hr"] <= 24)]
+df_steele[["date", "hr", "kwh"]].to_csv(output_steele_a, index=False)
+print(f"Wrote {len(df_steele)} Steele A rows to {output_steele_a}")
+
+# Steele A weather — last 3 years for Plymouth, UT
+steele_end   = df_steele["date"].max()
+steele_start = (pd.to_datetime(steele_end) - pd.DateOffset(years=3)).strftime("%Y-%m-%d")
+print(f"\nFetching Steele A weather {steele_start} to {steele_end} for Plymouth, UT...")
+wx_sa = fetch_archive(41.878, -112.148, steele_start, steele_end,
+                      ["shortwave_radiation", "temperature_2m"])
+rows_sa = []
+for t, ghi, temp in zip(wx_sa["hourly"]["time"],
+                        wx_sa["hourly"]["shortwave_radiation"],
+                        wx_sa["hourly"]["temperature_2m"]):
+    if ghi is None:
+        continue
+    dt = datetime.fromisoformat(t)
+    rows_sa.append({
+        "date": dt.strftime("%Y-%m-%d"),
+        "hr": dt.hour + 1,
+        "ghi": round(float(ghi), 2),
+        "temp_f": round(float(temp) if temp is not None else 70.0, 2),
+    })
+pd.DataFrame(rows_sa).to_csv(output_steele_a_wx, index=False)
+print(f"Wrote {len(rows_sa)} Steele A weather rows to {output_steele_a_wx}")
 
 print("\nDone.")

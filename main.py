@@ -49,10 +49,31 @@ logger = logging.getLogger(__name__)
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 CAISO_NODE = "ELAP_PACE-APND"
 
-LEHI_LAT  = 40.3916
-LEHI_LON  = -111.8508
-BLUFF_LAT = 37.2879   # Red Mesa solar plant — Bluff, UT
-BLUFF_LON = -109.5512
+LEHI_LAT     = 40.3916
+LEHI_LON     = -111.8508
+BLUFF_LAT    = 37.2879   # Red Mesa solar plant — Bluff, UT
+BLUFF_LON    = -109.5512
+PLYMOUTH_LAT = 41.878    # Steele A solar plant — Plymouth, UT
+PLYMOUTH_LON = -112.148
+
+SOLAR_PLANTS: dict = {
+    "red-mesa": {
+        "label":       "Red Mesa",
+        "lat":         BLUFF_LAT,
+        "lon":         BLUFF_LON,
+        "column":      "RED MESA",
+        "csv_env":     "RED_MESA_CSV_URL",
+        "weather_env": "SOLAR_WEATHER_CSV_URL",
+    },
+    "steele-a": {
+        "label":       "Steele A",
+        "lat":         PLYMOUTH_LAT,
+        "lon":         PLYMOUTH_LON,
+        "column":      "Steel A",
+        "csv_env":     "STEELE_A_CSV_URL",
+        "weather_env": "STEELE_A_WEATHER_CSV_URL",
+    },
+}
 
 EXCEL_PATH = os.environ.get(
     "EXCEL_PATH",
@@ -91,20 +112,24 @@ model_state: dict = {
     "error": None,
 }
 
-solar_model_state: dict = {
-    "model": None,
-    "history": {},      # {date_str: {om_hour_0_23: kwh}}
-    "trained_at": None,
-    "record_count": 0,
-    "date_range": None,
-    "r2": None,
-    "training": False,
-    "error": None,
+solar_states: dict = {
+    key: {
+        "model": None,
+        "history": {},
+        "trained_at": None,
+        "record_count": 0,
+        "date_range": None,
+        "r2": None,
+        "training": False,
+        "error": None,
+    }
+    for key in SOLAR_PLANTS
 }
 
 
-def load_red_mesa_data() -> pd.DataFrame:
-    url = os.environ.get("RED_MESA_CSV_URL")
+def load_plant_data(plant_key: str) -> pd.DataFrame:
+    plant = SOLAR_PLANTS[plant_key]
+    url = os.environ.get(plant["csv_env"])
     if url:
         resp = httpx.get(url, timeout=30.0)
         resp.raise_for_status()
@@ -134,7 +159,7 @@ def load_red_mesa_data() -> pd.DataFrame:
         .dt.strftime("%Y-%m-%d")
     )
     df["hr"]  = df["Hr"].astype(int)
-    df["kwh"] = pd.to_numeric(df["RED MESA"], errors="coerce").fillna(0)
+    df["kwh"] = pd.to_numeric(df[plant["column"]], errors="coerce").fillna(0)
     df = df[(df["hr"] >= 1) & (df["hr"] <= 24)]
     return df[["date", "hr", "kwh"]]
 
@@ -251,9 +276,10 @@ async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool =
     return result
 
 
-async def fetch_solar_weather(start_date: str, end_date: str, use_forecast_api: bool = False) -> dict:
-    """Returns {date_str: {hour_0_23: {"ghi": float, "temp_f": float}}} for Bluff, UT."""
-    cache_key = ("solar", start_date, end_date, use_forecast_api)
+async def fetch_solar_weather(start_date: str, end_date: str, lat: float, lon: float,
+                              use_forecast_api: bool = False) -> dict:
+    """Returns {date_str: {hour_0_23: {"ghi": float, "temp_f": float}}}."""
+    cache_key = ("solar", lat, lon, start_date, end_date, use_forecast_api)
     cached = _weather_cache.get(cache_key)
     if cached and time.monotonic() - cached[0] < _WEATHER_CACHE_TTL:
         return cached[1]
@@ -264,8 +290,8 @@ async def fetch_solar_weather(start_date: str, end_date: str, use_forecast_api: 
         else "https://archive-api.open-meteo.com/v1/archive"
     )
     params = {
-        "latitude": BLUFF_LAT,
-        "longitude": BLUFF_LON,
+        "latitude": lat,
+        "longitude": lon,
         "start_date": start_date,
         "end_date": end_date,
         "hourly": "shortwave_radiation,temperature_2m",
@@ -326,31 +352,34 @@ def build_solar_features(hr_1_to_24: int, ghi: float, temp_f: float, date_str: s
 SOLAR_TRAINING_YEARS = 3
 
 
-async def train_solar_model() -> None:
-    solar_model_state["training"] = True
-    solar_model_state["error"]    = None
+async def train_plant_model(plant_key: str) -> None:
+    plant = SOLAR_PLANTS[plant_key]
+    state = solar_states[plant_key]
+    state["training"] = True
+    state["error"]    = None
     try:
-        logger.info("Loading Red Mesa data...")
-        df = load_red_mesa_data()
+        logger.info(f"Loading {plant['label']} data...")
+        df = load_plant_data(plant_key)
         df = df[df["kwh"] >= 0]
 
         cutoff = (pd.to_datetime(df["date"].max()) - pd.DateOffset(years=SOLAR_TRAINING_YEARS)).strftime("%Y-%m-%d")
         train_df = df[df["date"] >= cutoff].copy()
-        logger.info(f"Red Mesa training on {len(train_df)} rows from {train_df['date'].min()} to {train_df['date'].max()}")
+        logger.info(f"{plant['label']} training on {len(train_df)} rows from {train_df['date'].min()} to {train_df['date'].max()}")
 
-        weather = _load_weather_csv("SOLAR_WEATHER_CSV_URL")
+        weather = _load_weather_csv(plant["weather_env"])
         if not weather:
-            logger.info("Fetching solar weather for Bluff, UT...")
-            weather = await fetch_solar_weather(train_df["date"].min(), train_df["date"].max())
+            logger.info(f"Fetching solar weather for {plant['label']}...")
+            weather = await fetch_solar_weather(
+                train_df["date"].min(), train_df["date"].max(),
+                plant["lat"], plant["lon"],
+            )
         else:
-            logger.info("Using pre-loaded solar training weather (no API call needed)")
+            logger.info(f"Using pre-loaded training weather for {plant['label']}")
 
         train_df["om_hour"] = train_df["hr"] - 1
         train_df["ghi"]    = train_df.apply(lambda r: (weather.get(r["date"], {}).get(r["om_hour"]) or {}).get("ghi"),    axis=1)
         train_df["temp_f"] = train_df.apply(lambda r: (weather.get(r["date"], {}).get(r["om_hour"]) or {}).get("temp_f"), axis=1)
         train_df = train_df.dropna(subset=["ghi", "temp_f"])
-
-        # Only train on daytime hours where solar is meaningful
         train_df = train_df[train_df["ghi"] > 10]
 
         if len(train_df) < 24:
@@ -370,7 +399,7 @@ async def train_solar_model() -> None:
             om_hour = int(row["hr"]) - 1
             history.setdefault(row["date"], {})[om_hour] = round(float(row["kwh"]), 1)
 
-        solar_model_state.update({
+        state.update({
             "model": mdl,
             "history": history,
             "trained_at": datetime.now().isoformat(timespec="seconds"),
@@ -378,13 +407,13 @@ async def train_solar_model() -> None:
             "date_range": [train_df["date"].min(), train_df["date"].max()],
             "r2": round(r2, 3),
         })
-        logger.info(f"Solar model ready — {len(y):,} daytime samples, R²={r2:.3f}")
+        logger.info(f"{plant['label']} model ready — {len(y):,} daytime samples, R²={r2:.3f}")
 
     except Exception as exc:
-        logger.error(f"Solar training failed: {exc}")
-        solar_model_state["error"] = str(exc)
+        logger.error(f"{plant['label']} training failed: {exc}")
+        state["error"] = str(exc)
     finally:
-        solar_model_state["training"] = False
+        state["training"] = False
 
 
 TRAINING_YEARS = 2  # only use this many recent years for fitting
@@ -692,39 +721,50 @@ async def accuracy(target_date: str = Query(..., alias="date", description="YYYY
     }
 
 
-@app.get("/api/solar/status")
-async def solar_status():
-    s = solar_model_state
-    if s["model"] is None and not s["training"] and s["error"] is None:
-        asyncio.create_task(train_solar_model())
+def _get_plant_or_404(plant: str):
+    if plant not in SOLAR_PLANTS:
+        raise HTTPException(status_code=404, detail=f"Unknown plant '{plant}'. Valid: {list(SOLAR_PLANTS)}")
+    return SOLAR_PLANTS[plant], solar_states[plant]
+
+
+@app.get("/api/solar/{plant}/status")
+async def solar_plant_status(plant: str):
+    cfg, state = _get_plant_or_404(plant)
+    if state["model"] is None and not state["training"] and state["error"] is None:
+        asyncio.create_task(train_plant_model(plant))
     return {
-        "ready": s["model"] is not None,
-        "training": s["training"],
-        "error": s["error"],
-        "trained_at": s["trained_at"],
-        "record_count": s["record_count"],
-        "date_range": s["date_range"],
-        "r2": s["r2"],
+        "plant":        plant,
+        "label":        cfg["label"],
+        "ready":        state["model"] is not None,
+        "training":     state["training"],
+        "error":        state["error"],
+        "trained_at":   state["trained_at"],
+        "record_count": state["record_count"],
+        "date_range":   state["date_range"],
+        "r2":           state["r2"],
     }
 
 
-@app.post("/api/solar/train")
-async def solar_train_endpoint(background_tasks: BackgroundTasks):
-    if solar_model_state["training"]:
-        raise HTTPException(status_code=409, detail="Solar model is already training.")
-    background_tasks.add_task(train_solar_model)
-    return {"message": "Solar model training started."}
+@app.post("/api/solar/{plant}/train")
+async def solar_plant_train(plant: str, background_tasks: BackgroundTasks):
+    cfg, state = _get_plant_or_404(plant)
+    if state["training"]:
+        raise HTTPException(status_code=409, detail=f"{cfg['label']} model is already training.")
+    background_tasks.add_task(train_plant_model, plant)
+    return {"message": f"{cfg['label']} model training started."}
 
 
-@app.get("/api/solar/forecast")
-async def solar_forecast(
+@app.get("/api/solar/{plant}/forecast")
+async def solar_plant_forecast(
+    plant: str,
     target_date: str = Query(..., alias="date", description="YYYY-MM-DD"),
     fmt: str = Query("json", alias="format"),
 ):
-    if solar_model_state["model"] is None:
-        if not solar_model_state["training"]:
-            asyncio.create_task(train_solar_model())
-        raise HTTPException(status_code=503, detail="Solar model is training — please try again in about 30 seconds.")
+    cfg, state = _get_plant_or_404(plant)
+    if state["model"] is None:
+        if not state["training"]:
+            asyncio.create_task(train_plant_model(plant))
+        raise HTTPException(status_code=503, detail=f"{cfg['label']} model is training — please try again in about 30 seconds.")
     try:
         dt = datetime.strptime(target_date, "%Y-%m-%d").date()
     except ValueError:
@@ -732,10 +772,10 @@ async def solar_forecast(
     if dt > date.today() + timedelta(days=16):
         raise HTTPException(status_code=400, detail="Open-Meteo only forecasts up to 16 days ahead.")
 
-    if target_date in solar_model_state["history"]:
-        day_hist = solar_model_state["history"][target_date]
+    if target_date in state["history"]:
+        day_hist = state["history"][target_date]
         try:
-            weather = await fetch_solar_weather(target_date, target_date, use_forecast_api=False)
+            weather = await fetch_solar_weather(target_date, target_date, cfg["lat"], cfg["lon"], use_forecast_api=False)
             day_wx = weather.get(target_date, {})
         except Exception:
             day_wx = {}
@@ -753,11 +793,12 @@ async def solar_forecast(
         }
         if fmt == "csv":
             return _solar_to_csv(hourly)
-        return {"date": target_date, "type": "historical", "hourly": hourly, "summary": summary}
+        return {"date": target_date, "plant": plant, "type": "historical", "hourly": hourly, "summary": summary}
 
     use_forecast_api = dt >= date.today() - timedelta(days=7)
     try:
-        weather = await fetch_solar_weather(target_date, target_date, use_forecast_api=use_forecast_api)
+        weather = await fetch_solar_weather(target_date, target_date, cfg["lat"], cfg["lon"],
+                                            use_forecast_api=use_forecast_api)
         day_wx = weather.get(target_date, {})
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Solar weather API error: {exc}")
@@ -765,7 +806,7 @@ async def solar_forecast(
     if not day_wx:
         raise HTTPException(status_code=404, detail=f"No solar weather data for {target_date}.")
 
-    mdl = solar_model_state["model"]
+    mdl = state["model"]
     hourly = []
     for om_hour in range(24):
         hr_1_24 = om_hour + 1
@@ -785,7 +826,7 @@ async def solar_forecast(
     }
     if fmt == "csv":
         return _solar_to_csv(hourly)
-    return {"date": target_date, "type": "forecast", "hourly": hourly, "summary": summary}
+    return {"date": target_date, "plant": plant, "type": "forecast", "hourly": hourly, "summary": summary}
 
 
 @app.get("/")

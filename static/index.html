@@ -210,7 +210,8 @@
   <div class="tab-nav">
     <button class="tab-btn active" id="tab-btn-forecast"  onclick="switchTab('forecast')">Load Forecast</button>
     <button class="tab-btn"        id="tab-btn-accuracy"  onclick="switchTab('accuracy')">Forecast vs Actuals</button>
-    <button class="tab-btn"        id="tab-btn-solar"     onclick="switchTab('solar')">Red Mesa Solar</button>
+    <button class="tab-btn"        id="tab-btn-solar-red-mesa"  onclick="switchTab('solar-red-mesa')">Red Mesa Solar</button>
+    <button class="tab-btn"        id="tab-btn-solar-steele-a"  onclick="switchTab('solar-steele-a')">Steele A Solar</button>
   </div>
 
   <!-- ══════════════════════ TAB 1: FORECAST ══════════════════════ -->
@@ -308,41 +309,54 @@
   </div>
 
   <!-- ══════════════════════ TAB 3: RED MESA SOLAR ══════════════════════ -->
-  <div id="tab-solar" class="hidden">
+  <div id="tab-solar-red-mesa" class="hidden">
     <div class="controls">
       <div class="field">
-        <label for="solar-date-input">Date</label>
-        <input type="date" id="solar-date-input" />
+        <label for="solar-red-mesa-date">Date</label>
+        <input type="date" id="solar-red-mesa-date" />
       </div>
-      <button class="btn-primary" id="solar-btn" onclick="getSolarForecast()">Get Solar Forecast</button>
+      <button class="btn-primary" id="solar-red-mesa-btn" onclick="getSolarForecast('red-mesa')">Get Solar Forecast</button>
     </div>
-
-    <div id="solar-msg" class="hidden message"></div>
-
-    <div id="solar-results" class="hidden">
+    <div id="solar-red-mesa-msg" class="hidden message"></div>
+    <div id="solar-red-mesa-results" class="hidden">
       <div class="cards">
-        <div class="card avg">
-          <div class="card-label">Total Generation</div>
-          <div class="card-value" id="solar-total">—<span class="card-unit">kWh</span></div>
-        </div>
-        <div class="card peak">
-          <div class="card-label">Peak Hour</div>
-          <div class="card-value" id="solar-peakhour">—</div>
-        </div>
-        <div class="card hour">
-          <div class="card-label">Peak Generation</div>
-          <div class="card-value" id="solar-peak">—<span class="card-unit">kWh</span></div>
-        </div>
+        <div class="card avg"><div class="card-label">Total Generation</div><div class="card-value" id="solar-red-mesa-total">—<span class="card-unit">kWh</span></div></div>
+        <div class="card peak"><div class="card-label">Peak Hour</div><div class="card-value" id="solar-red-mesa-peakhour">—</div></div>
+        <div class="card hour"><div class="card-label">Peak Generation</div><div class="card-value" id="solar-red-mesa-peak">—<span class="card-unit">kWh</span></div></div>
       </div>
-
       <div class="chart-wrap">
-        <div class="chart-title" id="solar-chart-title">Red Mesa Solar Generation</div>
-        <div class="chart-container"><canvas id="solar-chart"></canvas></div>
+        <div class="chart-title" id="solar-red-mesa-chart-title">Red Mesa Solar Generation</div>
+        <div class="chart-container"><canvas id="solar-red-mesa-chart"></canvas></div>
         <table class="data-table" style="margin-top:1.25rem">
-          <thead>
-            <tr><th>Hour</th><th>GHI (W/m²)</th><th id="solar-kwh-header">Generation (kWh)</th></tr>
-          </thead>
-          <tbody id="solar-tbody"></tbody>
+          <thead><tr><th>Hour</th><th>GHI (W/m²)</th><th id="solar-red-mesa-kwh-header">Generation (kWh)</th></tr></thead>
+          <tbody id="solar-red-mesa-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ TAB 4: STEELE A SOLAR ══════════════════════ -->
+  <div id="tab-solar-steele-a" class="hidden">
+    <div class="controls">
+      <div class="field">
+        <label for="solar-steele-a-date">Date</label>
+        <input type="date" id="solar-steele-a-date" />
+      </div>
+      <button class="btn-primary" id="solar-steele-a-btn" onclick="getSolarForecast('steele-a')">Get Solar Forecast</button>
+    </div>
+    <div id="solar-steele-a-msg" class="hidden message"></div>
+    <div id="solar-steele-a-results" class="hidden">
+      <div class="cards">
+        <div class="card avg"><div class="card-label">Total Generation</div><div class="card-value" id="solar-steele-a-total">—<span class="card-unit">kWh</span></div></div>
+        <div class="card peak"><div class="card-label">Peak Hour</div><div class="card-value" id="solar-steele-a-peakhour">—</div></div>
+        <div class="card hour"><div class="card-label">Peak Generation</div><div class="card-value" id="solar-steele-a-peak">—<span class="card-unit">kWh</span></div></div>
+      </div>
+      <div class="chart-wrap">
+        <div class="chart-title" id="solar-steele-a-chart-title">Steele A Solar Generation</div>
+        <div class="chart-container"><canvas id="solar-steele-a-chart"></canvas></div>
+        <table class="data-table" style="margin-top:1.25rem">
+          <thead><tr><th>Hour</th><th>GHI (W/m²)</th><th id="solar-steele-a-kwh-header">Generation (kWh)</th></tr></thead>
+          <tbody id="solar-steele-a-tbody"></tbody>
         </table>
       </div>
     </div>
@@ -353,20 +367,21 @@
 <script>
   let chart      = null;
   let accChart   = null;
-  let solarChart = null;
+  const solarCharts = {};
 
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
   const yesterdayStr = new Date(today - 86400000).toISOString().slice(0, 10);
-  document.getElementById("date-input").value       = todayStr;
-  document.getElementById("acc-date-input").value   = yesterdayStr;
-  document.getElementById("acc-date-input").max     = yesterdayStr;
-  document.getElementById("solar-date-input").value = todayStr;
+  document.getElementById("date-input").value     = todayStr;
+  document.getElementById("acc-date-input").value = yesterdayStr;
+  document.getElementById("acc-date-input").max   = yesterdayStr;
+  document.getElementById("solar-red-mesa-date").value  = todayStr;
+  document.getElementById("solar-steele-a-date").value  = todayStr;
 
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["forecast", "accuracy", "solar"].forEach(t => {
+    ["forecast", "accuracy", "solar-red-mesa", "solar-steele-a"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -604,76 +619,68 @@
     document.getElementById("acc-results").classList.remove("hidden");
   }
 
-  // ── Tab 3: Red Mesa Solar ─────────────────────────────────────────────
+  // ── Tabs 3+: Solar Plants (generic) ──────────────────────────────────
 
-  function showSolarMsg(text, type = "error") {
-    const el = document.getElementById("solar-msg");
-    el.textContent = text; el.className = `message ${type}`; el.classList.remove("hidden");
-  }
-  function hideSolarMsg() { document.getElementById("solar-msg").classList.add("hidden"); }
+  async function getSolarForecast(plant) {
+    const dateVal = document.getElementById(`solar-${plant}-date`).value;
+    const msgEl   = document.getElementById(`solar-${plant}-msg`);
+    const btn     = document.getElementById(`solar-${plant}-btn`);
+    const showMsg = (t, type = "error") => { msgEl.textContent = t; msgEl.className = `message ${type}`; msgEl.classList.remove("hidden"); };
+    const hideMsg = () => msgEl.classList.add("hidden");
 
-  async function getSolarForecast() {
-    const dateVal = document.getElementById("solar-date-input").value;
-    if (!dateVal) { showSolarMsg("Please select a date."); return; }
-    hideSolarMsg();
-    document.getElementById("solar-btn").disabled = true;
-    document.getElementById("solar-results").classList.add("hidden");
-    showSolarMsg("Fetching solar forecast…", "info");
+    if (!dateVal) { showMsg("Please select a date."); return; }
+    hideMsg();
+    btn.disabled = true;
+    document.getElementById(`solar-${plant}-results`).classList.add("hidden");
+    showMsg("Fetching solar forecast…", "info");
     try {
-      const res  = await fetch(`/api/solar/forecast?date=${dateVal}`);
+      const res  = await fetch(`/api/solar/${plant}/forecast?date=${dateVal}`);
       const data = await res.json();
       if (res.status === 503) {
-        showSolarMsg("Solar model is training — this only happens once. Try again in about 30 seconds.", "info");
-        setTimeout(() => { document.getElementById("solar-btn").disabled = false; }, 5000);
+        showMsg("Solar model is training — this only happens once. Try again in about 30 seconds.", "info");
+        setTimeout(() => { btn.disabled = false; }, 5000);
         return;
       }
-      if (!res.ok) { showSolarMsg(data.detail ?? "Solar forecast failed."); return; }
-      hideSolarMsg();
-      renderSolar(data);
+      if (!res.ok) { showMsg(data.detail ?? "Solar forecast failed."); return; }
+      hideMsg();
+      renderSolar(plant, data);
     } catch (e) {
-      showSolarMsg("Network error: " + e.message);
+      showMsg("Network error: " + e.message);
     } finally {
-      document.getElementById("solar-btn").disabled = false;
+      btn.disabled = false;
     }
   }
 
-  function renderSolar(data) {
+  function renderSolar(plant, data) {
     const isHistorical = data.type === "historical";
     const s = data.summary;
+    const p = `solar-${plant}`;
 
-    document.getElementById("solar-chart-title").textContent =
-      isHistorical ? `Red Mesa Historical — ${data.date}` : `Red Mesa Forecast — ${data.date}`;
-    document.getElementById("solar-kwh-header").textContent =
-      isHistorical ? "Actual (kWh)" : "Forecast (kWh)";
-    document.getElementById("solar-total").innerHTML =
-      `${s.total_kwh != null ? s.total_kwh.toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
-    document.getElementById("solar-peak").innerHTML =
-      `${s.peak_kwh != null ? s.peak_kwh.toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
-    document.getElementById("solar-peakhour").textContent =
-      s.peak_hour != null ? fmt12(s.peak_hour) : "—";
+    document.getElementById(`${p}-chart-title`).textContent =
+      `${data.plant === "red-mesa" ? "Red Mesa" : "Steele A"} ${isHistorical ? "Historical" : "Forecast"} — ${data.date}`;
+    document.getElementById(`${p}-kwh-header`).textContent = isHistorical ? "Actual (kWh)" : "Forecast (kWh)";
+    document.getElementById(`${p}-total`).innerHTML    = `${s.total_kwh != null ? s.total_kwh.toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
+    document.getElementById(`${p}-peak`).innerHTML     = `${s.peak_kwh  != null ? s.peak_kwh.toLocaleString()  : "—"}<span class="card-unit"> kWh</span>`;
+    document.getElementById(`${p}-peakhour`).textContent = s.peak_hour != null ? fmt12(s.peak_hour) : "—";
 
     const labels = data.hourly.map(h => fmt12(h.hour));
     const kwhs   = data.hourly.map(h => h.kwh ?? 0);
     const ghis   = data.hourly.map(h => h.ghi);
-
     const barColor = isHistorical
       ? { bg: "rgba(214,158,46,0.7)", border: "rgba(214,158,46,1)" }
       : { bg: "rgba(237,137,54,0.7)", border: "rgba(237,137,54,1)" };
 
-    const tbody = document.getElementById("solar-tbody");
+    const tbody = document.getElementById(`${p}-tbody`);
     tbody.innerHTML = "";
     data.hourly.forEach(h => {
       const tr = document.createElement("tr");
       if (h.kwh === s.peak_kwh && s.peak_kwh > 0) tr.className = "peak-row";
-      tr.innerHTML = `
-        <td>${fmt12(h.hour)}</td>
-        <td>${h.ghi != null ? h.ghi.toLocaleString() : "—"}</td>
-        <td>${h.kwh != null ? h.kwh.toLocaleString() : "—"}</td>`;
+      tr.innerHTML = `<td>${fmt12(h.hour)}</td><td>${h.ghi != null ? h.ghi.toLocaleString() : "—"}</td><td>${h.kwh != null ? h.kwh.toLocaleString() : "—"}</td>`;
       tbody.appendChild(tr);
     });
 
-    if (solarChart) solarChart.destroy();
-    solarChart = new Chart(document.getElementById("solar-chart").getContext("2d"), {
+    if (solarCharts[plant]) solarCharts[plant].destroy();
+    solarCharts[plant] = new Chart(document.getElementById(`${p}-chart`).getContext("2d"), {
       data: {
         labels,
         datasets: [
@@ -703,7 +710,7 @@
       },
     });
 
-    document.getElementById("solar-results").classList.remove("hidden");
+    document.getElementById(`${p}-results`).classList.remove("hidden");
   }
 
   // ── Init ──────────────────────────────────────────────────────────────
