@@ -1,5 +1,6 @@
 import csv
 import io
+import json
 import os
 import re
 import time
@@ -1513,16 +1514,18 @@ async def root(target_date: str = Query(None, alias="date")):
 
 @app.get("/api/uamps/test")
 async def uamps_test():
-    """Diagnose UAMPS connectivity — call this to see what's failing."""
+    """Diagnose UAMPS connectivity — returns pretty-printed JSON."""
     user_id  = os.getenv("UAMPS_USER_ID", "")
     password = os.getenv("UAMPS_PASSWORD", "")
     if not user_id or not password:
-        return {"ok": False, "error": "UAMPS_USER_ID or UAMPS_PASSWORD not set in environment"}
-    try:
-        data = await asyncio.to_thread(_uamps_fetch_day_sync, user_id, password, date.today())
-        return {"ok": True, "hours": len(data), "sample": {str(k): v for k, v in list(data.items())[:3]}}
-    except Exception as exc:
-        return {"ok": False, "error": str(exc)}
+        result = {"ok": False, "error": "UAMPS_USER_ID or UAMPS_PASSWORD not set in environment"}
+    else:
+        try:
+            data = await asyncio.to_thread(_uamps_fetch_day_sync, user_id, password, date.today())
+            result = {"ok": True, "hours": len(data), "sample": {str(k): v for k, v in list(data.items())[:3]}}
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+    return Response(content=json.dumps(result, indent=2), media_type="application/json")
 
 
 @app.get("/api/dam-lmp")
