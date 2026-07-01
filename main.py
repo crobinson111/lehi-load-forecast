@@ -477,6 +477,11 @@ async def train_plant_model(plant_key: str) -> None:
         state["training"] = False
 
 
+def _nebo_scheduled() -> float:
+    """Nebo fixed schedule: 10,000 kWh every hour."""
+    return 10000.0
+
+
 def _px_scheduled(om_hour: int, dt: date) -> float:
     """PX fixed schedule: Mon-Sat in July only, excluding WECC holidays."""
     if dt in _WECC_HOLIDAYS or dt.month != 7 or dt.weekday() == 6:
@@ -998,7 +1003,7 @@ async def supply_portfolio(
             px  = round(supply.get("px",      0.0), 1)
             os_ = round(supply.get("os",      0.0), 1)
         else:
-            nb  = 0.0
+            nb  = round(_nebo_scheduled(), 1)
             hb  = 0.0
             px  = round(_px_scheduled(om_hour, dt), 1)
             os_ = round(_os_scheduled(om_hour, dt), 1)
