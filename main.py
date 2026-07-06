@@ -421,6 +421,7 @@ def load_excel_data() -> pd.DataFrame:
 
 
 _weather_cache: dict = {}
+_weather_day_cache: dict = {}   # (date_str, use_forecast_api) → (ts, day_data)
 _WEATHER_CACHE_TTL = 7200  # 2 hours
 _openmeteo_semaphore: asyncio.Semaphore | None = None  # created after event loop starts
 
@@ -432,11 +433,17 @@ def _get_openmeteo_sem() -> asyncio.Semaphore:
     return _openmeteo_semaphore
 
 async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool = False) -> dict:
-    """Returns {date_str: {openmeteo_hour_0_to_23: temp_f}}"""
+    """Returns {date_str: {openmeteo_hour_0_to_23: {temp_f, apparent_f}}}"""
+    # Fast path: single-day lookup — check per-day cache first
+    if start_date == end_date:
+        day_key = (start_date, use_forecast_api)
+        cached_day = _weather_day_cache.get(day_key)
+        if cached_day and time.monotonic() - cached_day[0] < _WEATHER_CACHE_TTL:
+            return {start_date: cached_day[1]}
+
     cache_key = (start_date, end_date, use_forecast_api)
     cached = _weather_cache.get(cache_key)
     if cached and time.monotonic() - cached[0] < _WEATHER_CACHE_TTL:
-        logger.info(f"Weather cache hit for {start_date}–{end_date}")
         return cached[1]
 
     base_url = (
@@ -481,7 +488,11 @@ async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool =
             "temp_f": temp,
             "apparent_f": app if app is not None else temp,
         }
-    _weather_cache[cache_key] = (time.monotonic(), result)
+    ts = time.monotonic()
+    _weather_cache[cache_key] = (ts, result)
+    # Populate per-day cache so pre-warmed ranges satisfy single-day lookups
+    for date_str, day_data in result.items():
+        _weather_day_cache[(date_str, use_forecast_api)] = (ts, day_data)
     return result
 
 
@@ -1018,10 +1029,23 @@ async def _init_supply() -> None:
         logger.error(f"Failed to load UAMPS schedule: {exc}")
 
 
+async def _prewarm_weather_cache() -> None:
+    """Fetch today + 8 days in one API call so per-day lookups hit the cache."""
+    await asyncio.sleep(5)  # let other startup tasks settle first
+    today_str = date.today().strftime("%Y-%m-%d")
+    end_str   = (date.today() + timedelta(days=8)).strftime("%Y-%m-%d")
+    try:
+        await fetch_weather(today_str, end_str, use_forecast_api=True)
+        logger.info(f"Load weather cache pre-warmed: {today_str} → {end_str}")
+    except Exception as exc:
+        logger.warning(f"Weather cache pre-warm failed (will retry on first request): {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     asyncio.create_task(train_model())
     asyncio.create_task(_init_supply())
+    asyncio.create_task(_prewarm_weather_cache())
     # Solar models train on demand (first solar request) — not at startup
     yield
 
@@ -1128,6 +1152,8 @@ async def forecast(
         weather = await fetch_weather(target_date, target_date, use_forecast_api=use_forecast_api)
         day_temps = weather.get(target_date, {})
     except Exception as exc:
+        if "429" in str(exc):
+            raise HTTPException(status_code=503, detail="Open-Meteo is rate-limiting this server — please try again in a minute.")
         raise HTTPException(status_code=502, detail=f"Weather API error: {exc}")
 
     if not day_temps:
@@ -1176,6 +1202,8 @@ async def accuracy(target_date: str = Query(..., alias="date", description="YYYY
         weather = await fetch_weather(target_date, target_date, use_forecast_api=False)
         day_temps = weather.get(target_date, {})
     except Exception as exc:
+        if "429" in str(exc):
+            raise HTTPException(status_code=503, detail="Open-Meteo is rate-limiting this server — please try again in a minute.")
         raise HTTPException(status_code=502, detail=f"Weather API error: {exc}")
 
     mdl = model_state["model"]
