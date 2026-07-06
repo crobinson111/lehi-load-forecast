@@ -428,7 +428,7 @@ _openmeteo_semaphore: asyncio.Semaphore | None = None  # created after event loo
 def _get_openmeteo_sem() -> asyncio.Semaphore:
     global _openmeteo_semaphore
     if _openmeteo_semaphore is None:
-        _openmeteo_semaphore = asyncio.Semaphore(1)
+        _openmeteo_semaphore = asyncio.Semaphore(4)
     return _openmeteo_semaphore
 
 async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool = False) -> dict:
@@ -1432,6 +1432,18 @@ async def wind_plant_forecast(
     return {"date": target_date, "plant": plant, "type": "forecast", "hourly": hourly, "summary": summary}
 
 
+async def _safe_fetch_load_wx(target_date: str, dt: date) -> dict:
+    """Returns {om_hour: {temp_f, apparent_f}} for load forecast, or {} on any error."""
+    if model_state["model"] is None:
+        return {}
+    try:
+        use_fc = dt >= date.today() - timedelta(days=7)
+        wx = await fetch_weather(target_date, target_date, use_forecast_api=use_fc)
+        return wx.get(target_date, {})
+    except Exception:
+        return {}
+
+
 @app.get("/api/supply")
 async def supply_portfolio(
     target_date: str = Query(..., alias="date", description="YYYY-MM-DD"),
@@ -1445,35 +1457,33 @@ async def supply_portfolio(
 
     is_historical = target_date in supply_history
 
+    weather_timed_out = False
     try:
-        red_mesa_kwh, steele_a_kwh, horse_butte_kwh = await asyncio.wait_for(
+        red_mesa_kwh, steele_a_kwh, horse_butte_kwh, day_wx_load = await asyncio.wait_for(
             asyncio.gather(
-                _plant_hourly_kwh("red-mesa",    target_date, dt),
-                _plant_hourly_kwh("steele-a",    target_date, dt),
+                _plant_hourly_kwh("red-mesa",        target_date, dt),
+                _plant_hourly_kwh("steele-a",        target_date, dt),
                 _wind_plant_hourly_kwh("horse-butte", target_date, dt),
+                _safe_fetch_load_wx(target_date, dt),
             ),
-            timeout=40.0,
+            timeout=45.0,
         )
     except asyncio.TimeoutError:
-        raise HTTPException(status_code=503, detail="Weather data is taking too long. Please try again in a moment.")
+        red_mesa_kwh = steele_a_kwh = horse_butte_kwh = {}
+        day_wx_load = {}
+        weather_timed_out = True
 
     # Load — actuals if in history, otherwise model forecast
     load_by_hour: dict = {}
     if target_date in model_state["history"]:
         load_by_hour = model_state["history"][target_date]
-    elif model_state["model"] is not None:
-        try:
-            use_load_fc = dt >= date.today() - timedelta(days=7)
-            wx_load = await fetch_weather(target_date, target_date, use_forecast_api=use_load_fc)
-            day_wx_load = wx_load.get(target_date, {})
-            mdl = model_state["model"]
-            for om_hour in range(24):
-                w = day_wx_load.get(om_hour)
-                if w:
-                    pred = float(max(mdl.predict(build_features(om_hour + 1, w["temp_f"], w["apparent_f"], target_date))[0], 0))
-                    load_by_hour[om_hour] = round(pred, 1)
-        except Exception:
-            pass
+    elif model_state["model"] is not None and day_wx_load:
+        mdl = model_state["model"]
+        for om_hour in range(24):
+            w = day_wx_load.get(om_hour)
+            if w:
+                pred = float(max(mdl.predict(build_features(om_hour + 1, w["temp_f"], w["apparent_f"], target_date))[0], 0))
+                load_by_hour[om_hour] = round(pred, 1)
 
     supply_day = supply_history.get(target_date, {})
     uamps_day  = await _uamps_get_day(dt)
@@ -1523,6 +1533,8 @@ async def supply_portfolio(
     ]
     if wind_states["horse-butte"]["model"] is None:
         warnings.append("Horse Butte model not ready")
+    if weather_timed_out:
+        warnings.append("Weather API timed out — solar/wind/load forecast unavailable. Try refreshing.")
 
     day_total = round(sum(h["total"] for h in hourly), 1)
     return {
