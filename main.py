@@ -421,14 +421,14 @@ def load_excel_data() -> pd.DataFrame:
 
 
 _weather_cache: dict = {}
-_WEATHER_CACHE_TTL = 1800  # 30 minutes
+_WEATHER_CACHE_TTL = 7200  # 2 hours
 _openmeteo_semaphore: asyncio.Semaphore | None = None  # created after event loop starts
 
 
 def _get_openmeteo_sem() -> asyncio.Semaphore:
     global _openmeteo_semaphore
     if _openmeteo_semaphore is None:
-        _openmeteo_semaphore = asyncio.Semaphore(4)
+        _openmeteo_semaphore = asyncio.Semaphore(2)
     return _openmeteo_semaphore
 
 async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool = False) -> dict:
@@ -459,7 +459,7 @@ async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool =
             async with httpx.AsyncClient(timeout=20.0) as client:
                 resp = await client.get(base_url, params=params)
         if resp.status_code == 429:
-            wait = 5 * (attempt + 1)
+            wait = 15 * (attempt + 1)
             logger.warning(f"Open-Meteo rate limit hit, retrying in {wait}s...")
             await asyncio.sleep(wait)
             continue
@@ -513,7 +513,7 @@ async def fetch_solar_weather(start_date: str, end_date: str, lat: float, lon: f
             async with httpx.AsyncClient(timeout=20.0) as client:
                 resp = await client.get(base_url, params=params)
         if resp.status_code == 429:
-            wait = 5 * (attempt + 1)
+            wait = 15 * (attempt + 1)
             logger.warning(f"Open-Meteo rate limit (solar), retrying in {wait}s...")
             await asyncio.sleep(wait)
             continue
@@ -564,7 +564,7 @@ async def fetch_wind_weather(start_date: str, end_date: str, lat: float, lon: fl
             async with httpx.AsyncClient(timeout=20.0) as client:
                 resp = await client.get(base_url, params=params)
         if resp.status_code == 429:
-            wait = 5 * (attempt + 1)
+            wait = 15 * (attempt + 1)
             logger.warning(f"Open-Meteo rate limit (wind), retrying in {wait}s...")
             await asyncio.sleep(wait)
             continue
