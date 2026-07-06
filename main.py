@@ -1459,25 +1459,34 @@ async def supply_portfolio(
 
     weather_timed_out = False
     try:
-        red_mesa_kwh, steele_a_kwh, horse_butte_kwh, day_wx_load = await asyncio.wait_for(
+        red_mesa_kwh, steele_a_kwh, horse_butte_kwh = await asyncio.wait_for(
             asyncio.gather(
                 _plant_hourly_kwh("red-mesa",        target_date, dt),
                 _plant_hourly_kwh("steele-a",        target_date, dt),
                 _wind_plant_hourly_kwh("horse-butte", target_date, dt),
-                _safe_fetch_load_wx(target_date, dt),
             ),
-            timeout=45.0,
+            timeout=40.0,
         )
     except asyncio.TimeoutError:
         red_mesa_kwh = steele_a_kwh = horse_butte_kwh = {}
-        day_wx_load = {}
         weather_timed_out = True
+
+    # Load weather fetched separately so it doesn't compete with plant fetches
+    day_wx_load: dict = {}
+    if not weather_timed_out:
+        try:
+            day_wx_load = await asyncio.wait_for(
+                _safe_fetch_load_wx(target_date, dt),
+                timeout=25.0,
+            )
+        except asyncio.TimeoutError:
+            weather_timed_out = True
 
     # Load — actuals if in history, otherwise model forecast
     load_by_hour: dict = {}
     if target_date in model_state["history"]:
         load_by_hour = model_state["history"][target_date]
-    elif model_state["model"] is not None and day_wx_load:
+    elif model_state["model"] is not None:
         mdl = model_state["model"]
         for om_hour in range(24):
             w = day_wx_load.get(om_hour)
