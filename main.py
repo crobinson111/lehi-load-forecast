@@ -453,19 +453,20 @@ async def fetch_weather(start_date: str, end_date: str, use_forecast_api: bool =
         "temperature_unit": "fahrenheit",
         "timezone": "America/Denver",
     }
-    async with _get_openmeteo_sem():
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            for attempt in range(6):
+    resp = None
+    for attempt in range(3):
+        async with _get_openmeteo_sem():
+            async with httpx.AsyncClient(timeout=20.0) as client:
                 resp = await client.get(base_url, params=params)
-                if resp.status_code == 429:
-                    wait = 20 * (attempt + 1)
-                    logger.warning(f"Open-Meteo rate limit hit, retrying in {wait}s...")
-                    await asyncio.sleep(wait)
-                    continue
-                resp.raise_for_status()
-                break
-            else:
-                resp.raise_for_status()
+        if resp.status_code == 429:
+            wait = 5 * (attempt + 1)
+            logger.warning(f"Open-Meteo rate limit hit, retrying in {wait}s...")
+            await asyncio.sleep(wait)
+            continue
+        resp.raise_for_status()
+        break
+    else:
+        resp.raise_for_status()
 
     result: dict = {}
     data = resp.json()
@@ -506,19 +507,20 @@ async def fetch_solar_weather(start_date: str, end_date: str, lat: float, lon: f
         "temperature_unit": "fahrenheit",
         "timezone": "America/Denver",
     }
-    async with _get_openmeteo_sem():
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            for attempt in range(6):
+    resp = None
+    for attempt in range(3):
+        async with _get_openmeteo_sem():
+            async with httpx.AsyncClient(timeout=20.0) as client:
                 resp = await client.get(base_url, params=params)
-                if resp.status_code == 429:
-                    wait = 20 * (attempt + 1)
-                    logger.warning(f"Open-Meteo rate limit (solar), retrying in {wait}s...")
-                    await asyncio.sleep(wait)
-                    continue
-                resp.raise_for_status()
-                break
-            else:
-                resp.raise_for_status()
+        if resp.status_code == 429:
+            wait = 5 * (attempt + 1)
+            logger.warning(f"Open-Meteo rate limit (solar), retrying in {wait}s...")
+            await asyncio.sleep(wait)
+            continue
+        resp.raise_for_status()
+        break
+    else:
+        resp.raise_for_status()
 
     result: dict = {}
     data = resp.json()
@@ -556,19 +558,20 @@ async def fetch_wind_weather(start_date: str, end_date: str, lat: float, lon: fl
         "hourly": "wind_speed_100m,wind_direction_100m",
         "timezone": "America/Denver",
     }
-    async with _get_openmeteo_sem():
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            for attempt in range(6):
+    resp = None
+    for attempt in range(3):
+        async with _get_openmeteo_sem():
+            async with httpx.AsyncClient(timeout=20.0) as client:
                 resp = await client.get(base_url, params=params)
-                if resp.status_code == 429:
-                    wait = 20 * (attempt + 1)
-                    logger.warning(f"Open-Meteo rate limit (wind), retrying in {wait}s...")
-                    await asyncio.sleep(wait)
-                    continue
-                resp.raise_for_status()
-                break
-            else:
-                resp.raise_for_status()
+        if resp.status_code == 429:
+            wait = 5 * (attempt + 1)
+            logger.warning(f"Open-Meteo rate limit (wind), retrying in {wait}s...")
+            await asyncio.sleep(wait)
+            continue
+        resp.raise_for_status()
+        break
+    else:
+        resp.raise_for_status()
 
     result: dict = {}
     data = resp.json()
@@ -1442,9 +1445,17 @@ async def supply_portfolio(
 
     is_historical = target_date in supply_history
 
-    red_mesa_kwh    = await _plant_hourly_kwh("red-mesa", target_date, dt)
-    steele_a_kwh    = await _plant_hourly_kwh("steele-a", target_date, dt)
-    horse_butte_kwh = await _wind_plant_hourly_kwh("horse-butte", target_date, dt)
+    try:
+        red_mesa_kwh, steele_a_kwh, horse_butte_kwh = await asyncio.wait_for(
+            asyncio.gather(
+                _plant_hourly_kwh("red-mesa",    target_date, dt),
+                _plant_hourly_kwh("steele-a",    target_date, dt),
+                _wind_plant_hourly_kwh("horse-butte", target_date, dt),
+            ),
+            timeout=40.0,
+        )
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=503, detail="Weather data is taking too long. Please try again in a moment.")
 
     # Load — actuals if in history, otherwise model forecast
     load_by_hour: dict = {}

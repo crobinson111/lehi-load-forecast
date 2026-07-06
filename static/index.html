@@ -1026,15 +1026,22 @@
     btn.disabled = true;
     document.getElementById("supply-results").classList.add("hidden");
     showM("Fetching supply portfolio…", "info");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 50000);
     try {
-      const res  = await fetch(`/api/supply?date=${dateVal}`);
+      const res  = await fetch(`/api/supply?date=${dateVal}`, { signal: controller.signal });
       const data = await res.json();
       if (!res.ok) { showM(data.detail ?? "Supply fetch failed."); return; }
       hideM();
       renderSupply(data);
     } catch (e) {
-      showM("Network error: " + e.message);
+      if (e.name === "AbortError") {
+        showM("Request timed out — the weather API is slow. Please try again in a moment.");
+      } else {
+        showM("Network error: " + e.message);
+      }
     } finally {
+      clearTimeout(timer);
       btn.disabled = false;
     }
   }
