@@ -783,11 +783,16 @@
       document.getElementById("chart-title").textContent =
         `Load Forecast — ${_liveForecastData.date}  ·  Live through HE ${maxHr}`;
 
-      // Re-fetch in 30 min if still on today
+      // Re-fetch at :16 past the next hour (data posts at :15)
       if (_liveTimer) clearTimeout(_liveTimer);
+      const _msUntilNext16 = () => {
+        const now = new Date(), t = new Date(now);
+        now.getMinutes() < 16 ? t.setMinutes(16, 0, 0) : t.setHours(now.getHours() + 1, 16, 0, 0);
+        return Math.max(t - now, 60000);
+      };
       _liveTimer = setTimeout(() => {
         if (document.getElementById("date-input").value === todayStr) _fetchAndShowLive();
-      }, 30 * 60 * 1000);
+      }, _msUntilNext16());
 
     } catch { /* live data is optional — fail silently */ }
   }

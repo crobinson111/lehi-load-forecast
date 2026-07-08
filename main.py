@@ -1472,8 +1472,18 @@ async def _safe_fetch_load_wx(target_date: str, dt: date) -> dict:
         return {}
 
 
-_realtime_cache: dict = {"ts": 0.0, "data": {}}
-_REALTIME_TTL = 1800.0  # 30 minutes
+_realtime_cache: dict = {"expires": 0.0, "data": {}}
+
+
+def _next_15_past() -> float:
+    """Returns monotonic time when realtime cache should next expire (:15 past the next hour, Mountain Time)."""
+    tz = ZoneInfo("America/Denver")
+    now = datetime.now(tz)
+    if now.minute < 15:
+        target = now.replace(minute=15, second=0, microsecond=0)
+    else:
+        target = (now + timedelta(hours=1)).replace(minute=15, second=0, microsecond=0)
+    return time.monotonic() + (target - now).total_seconds()
 
 
 def _parse_hourlylog(content: bytes) -> dict:
@@ -1536,8 +1546,7 @@ def _fetch_realtime_sync() -> dict:
 
 @app.get("/api/realtime_load")
 async def api_realtime_load():
-    now = time.monotonic()
-    if now - _realtime_cache["ts"] < _REALTIME_TTL:
+    if time.monotonic() < _realtime_cache["expires"]:
         return _realtime_cache["data"]
     try:
         loop = asyncio.get_event_loop()
@@ -1548,7 +1557,7 @@ async def api_realtime_load():
     except Exception as exc:
         logger.warning(f"realtime_load fetch error: {exc}")
         data = _realtime_cache["data"]
-    _realtime_cache.update({"ts": now, "data": data})
+    _realtime_cache.update({"expires": _next_15_past(), "data": data})
     return data
 
 
