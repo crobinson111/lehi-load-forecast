@@ -779,10 +779,10 @@
       if (chart) {
         const idx = chart.data.datasets.findIndex(ds => ds.label === "Model Forecast");
         const ds = {
-          type: "line", label: "Model Forecast",
+          type: "bar", label: "Model Forecast",
           data: d.hourly.map(h => h.forecast),
-          borderColor: "rgba(43,108,176,1)", backgroundColor: "rgba(43,108,176,0.1)",
-          borderWidth: 2, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "yLoad", order: 1,
+          backgroundColor: "rgba(43,108,176,0.55)", borderColor: "rgba(43,108,176,1)",
+          borderWidth: 1, yAxisID: "yLoad", order: 1,
         };
         if (idx >= 0) chart.data.datasets[idx] = ds;
         else chart.data.datasets.push(ds);
