@@ -1525,22 +1525,34 @@ def _fetch_realtime_sync() -> dict:
     import requests as _req
     import urllib3 as _u3
     _u3.disable_warnings()
-    uid = os.environ.get("UAMPS_USER_ID", "")
-    pwd = os.environ.get("UAMPS_PASSWORD", "")
+    uid = os.environ.get("UAMPS_USER_ID", "").strip()
+    pwd = os.environ.get("UAMPS_PASSWORD", "").strip()
     if not uid or not pwd:
+        logger.warning("realtime_load: UAMPS_USER_ID or UAMPS_PASSWORD not set")
         return {}
+    logger.info(f"realtime_load: logging in as {uid} (pwd len={len(pwd)})")
     sess = _req.Session()
     sess.headers["User-Agent"] = "Mozilla/5.0"
     sess.verify = False
-    r = sess.post("https://px.uamps.com/cgi-bin/wwiz.asp", data={
-        "wwizmstr": "WEB.LOGIN", "WWIZ_FORMNO": "0",
-        "user": uid, "pwd": pwd, "Submit": "Submit",
-    }, timeout=30)
-    if "logoff" not in r.text.lower():
-        logger.warning("realtime_load: UAMPS login failed")
+    try:
+        r = sess.post("https://px.uamps.com/cgi-bin/wwiz.asp", data={
+            "wwizmstr": "WEB.LOGIN", "WWIZ_FORMNO": "0",
+            "user": uid, "pwd": pwd, "Submit": "Submit",
+        }, timeout=30)
+        logger.info(f"realtime_load: login response status={r.status_code} logoff={'logoff' in r.text.lower()}")
+    except Exception as exc:
+        logger.warning(f"realtime_load: login request failed: {exc}")
         return {}
-    r2 = sess.get("https://px.uamps.com/members/lehi/hourlylog.xls", timeout=30)
-    r2.raise_for_status()
+    if "logoff" not in r.text.lower():
+        logger.warning("realtime_load: UAMPS login failed — bad credentials or network block")
+        return {}
+    try:
+        r2 = sess.get("https://px.uamps.com/members/lehi/hourlylog.xls", timeout=30)
+        r2.raise_for_status()
+        logger.info(f"realtime_load: fetched hourlylog ({len(r2.content)} bytes)")
+    except Exception as exc:
+        logger.warning(f"realtime_load: hourlylog fetch failed: {exc}")
+        return {}
     return _parse_hourlylog(r2.content)
 
 
