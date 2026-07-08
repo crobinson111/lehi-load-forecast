@@ -1208,6 +1208,9 @@
     localStorage.setItem("lehi_gen_loaded_" + dateStr, JSON.stringify(vals));
   }
 
+  const _ENGINE_MAP = {4000: "2 small", 6000: "3 small", 18000: "all except 1 sm", 18900: "all except 1 sm", 21200: "all"};
+  function _engineLabel(kwh) { return _ENGINE_MAP[Math.round(kwh)] || ""; }
+
   function _genSchFmtDate(d) {
     const dt = new Date(d + "T12:00:00");
     return dt.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
@@ -1261,7 +1264,8 @@
     const hdr = document.getElementById("gen-sch-thead-row");
     hdr.innerHTML = `<th>Hour</th><th>HE</th>` +
       sorted.map(d =>
-        `<th>${_genSchFmtDate(d)}<br><span style="font-weight:400;font-size:.7rem;text-transform:none;letter-spacing:0">${d}</span></th>`
+        `<th>${_genSchFmtDate(d)}<br><span style="font-weight:400;font-size:.7rem;text-transform:none;letter-spacing:0">${d}</span></th>` +
+        `<th style="color:#718096;font-weight:500">Engines</th>`
       ).join("");
 
     const tbody = document.getElementById("gen-sch-tbody");
@@ -1273,7 +1277,9 @@
       sorted.forEach(d => {
         const gen = _loadGenLoaded(d);
         const val = gen[hr] || 0;
+        const eng = val ? _engineLabel(val) : "";
         cols += `<td style="text-align:right">${val ? Math.round(val).toLocaleString() : "—"}</td>`;
+        cols += `<td style="color:#4a5568;font-size:.82rem">${eng}</td>`;
       });
       tr.innerHTML = cols;
       tbody.appendChild(tr);
@@ -1286,6 +1292,7 @@
       const gen = _loadGenLoaded(d);
       const tot = Object.values(gen).reduce((s, v) => s + (parseFloat(v) || 0), 0);
       totCols += `<td style="text-align:right">${tot ? Math.round(tot).toLocaleString() : "—"}</td>`;
+      totCols += `<td></td>`;
     });
     trT.innerHTML = totCols;
     tbody.appendChild(trT);
