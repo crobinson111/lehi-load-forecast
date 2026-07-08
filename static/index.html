@@ -266,7 +266,6 @@
 
   <div class="tab-nav">
     <button class="tab-btn active" id="tab-btn-forecast"  onclick="switchTab('forecast')">Load Forecast</button>
-    <button class="tab-btn"        id="tab-btn-accuracy"  onclick="switchTab('accuracy')">Forecast vs Actuals</button>
     <button class="tab-btn"        id="tab-btn-solar-red-mesa"  onclick="switchTab('solar-red-mesa')">Red Mesa Solar</button>
     <button class="tab-btn"        id="tab-btn-solar-steele-a"  onclick="switchTab('solar-steele-a')">Steele A Solar</button>
     <button class="tab-btn"        id="tab-btn-wind-horse-butte" onclick="switchTab('wind-horse-butte')">Horse Butte Wind</button>
@@ -306,6 +305,22 @@
         </div>
       </div>
 
+      <!-- shown when a past date is selected -->
+      <div id="acc-overlay-cards" class="cards hidden" style="margin-top:-.25rem;padding-top:.75rem;border-top:1px solid #e2e8f0">
+        <div class="card avg">
+          <div class="card-label">Mean Abs Error</div>
+          <div class="card-value" id="ov-mae">—<span class="card-unit">kW</span></div>
+        </div>
+        <div class="card peak">
+          <div class="card-label">Avg % Error</div>
+          <div class="card-value" id="ov-mape">—<span class="card-unit">%</span></div>
+        </div>
+        <div class="card min">
+          <div class="card-label">Forecast Peak</div>
+          <div class="card-value" id="ov-fc-peak">—<span class="card-unit">kW</span></div>
+        </div>
+      </div>
+
       <div class="chart-wrap">
         <div class="chart-title" id="chart-title">Hourly Forecast</div>
         <div class="chart-container"><canvas id="chart"></canvas></div>
@@ -322,51 +337,6 @@
     </div>
   </div>
 
-
-  <!-- ══════════════════════ TAB 2: FORECAST vs ACTUALS ══════════════════════ -->
-  <div id="tab-accuracy" class="hidden">
-    <div class="controls">
-      <div class="field">
-        <label for="acc-date-input">Past Date</label>
-        <input type="date" id="acc-date-input" />
-      </div>
-      <button class="btn-primary" id="acc-btn" onclick="getAccuracy()">Compare</button>
-    </div>
-
-    <div id="acc-msg" class="hidden message"></div>
-
-    <div id="acc-results" class="hidden">
-      <div class="cards">
-        <div class="card avg">
-          <div class="card-label">Mean Abs Error</div>
-          <div class="card-value" id="acc-mae">—<span class="card-unit">kW</span></div>
-        </div>
-        <div class="card peak">
-          <div class="card-label">Mean Abs % Error</div>
-          <div class="card-value" id="acc-mape">—<span class="card-unit">%</span></div>
-        </div>
-        <div class="card peak">
-          <div class="card-label">Actual Peak</div>
-          <div class="card-value" id="acc-actual-peak">—<span class="card-unit">kW</span></div>
-        </div>
-        <div class="card min">
-          <div class="card-label">Forecast Peak</div>
-          <div class="card-value" id="acc-forecast-peak">—<span class="card-unit">kW</span></div>
-        </div>
-      </div>
-
-      <div class="chart-wrap">
-        <div class="chart-title" id="acc-chart-title">Forecast vs Actuals</div>
-        <div class="chart-container"><canvas id="acc-chart"></canvas></div>
-        <table class="data-table" style="margin-top:1.25rem">
-          <thead>
-            <tr><th>Hour</th><th>Actual (kW)</th><th>Forecast (kW)</th><th>Diff (kW)</th><th>Diff %</th></tr>
-          </thead>
-          <tbody id="acc-tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
 
   <!-- ══════════════════════ TAB 3: RED MESA SOLAR ══════════════════════ -->
   <div id="tab-solar-red-mesa" class="hidden">
@@ -548,7 +518,6 @@
 
 <script>
   let chart           = null;
-  let accChart        = null;
   let supplyChart     = null;
   let _supplyData     = null;
   let _supplyGen      = {};
@@ -571,7 +540,7 @@
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["forecast", "accuracy", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "gen-sch"].forEach(t => {
+    ["forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "gen-sch"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -724,10 +693,12 @@
 
     document.getElementById("results").classList.remove("hidden");
 
-    // Overlay live actuals for today
+    document.getElementById("acc-overlay-cards").classList.add("hidden");
     if (data.date === todayStr) {
       _liveForecastData = data;
       _fetchAndShowLive();
+    } else if (isHistorical) {
+      _fetchAndShowAccuracy(data.date);
     }
   }
 
@@ -797,6 +768,53 @@
     } catch { /* live data is optional — fail silently */ }
   }
 
+  async function _fetchAndShowAccuracy(dateStr) {
+    try {
+      const res = await fetch(`/api/accuracy?date=${dateStr}`);
+      if (!res.ok) return;
+      const d = await res.json();
+      const m = d.metrics;
+
+      // Add model forecast as a blue line overlay
+      if (chart) {
+        const idx = chart.data.datasets.findIndex(ds => ds.label === "Model Forecast");
+        const ds = {
+          type: "line", label: "Model Forecast",
+          data: d.hourly.map(h => h.forecast),
+          borderColor: "rgba(43,108,176,1)", backgroundColor: "rgba(43,108,176,0.1)",
+          borderWidth: 2, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "yLoad", order: 1,
+        };
+        if (idx >= 0) chart.data.datasets[idx] = ds;
+        else chart.data.datasets.push(ds);
+        document.getElementById("chart-title").textContent = `Forecast vs Actuals — ${dateStr}`;
+        chart.update();
+      }
+
+      // Insert Forecast (kW) column between Actual and Temp
+      const thr = document.querySelector("#hourly-table thead tr");
+      if (!thr.querySelector(".forecast-th")) {
+        const th = document.createElement("th"); th.className = "forecast-th";
+        th.textContent = "Forecast (kW)";
+        thr.insertBefore(th, thr.children[2]);
+      }
+      const rows = document.querySelectorAll("#hourly-tbody tr");
+      d.hourly.forEach((h, i) => {
+        if (!rows[i] || rows[i].querySelector(".forecast-td")) return;
+        const td = document.createElement("td"); td.className = "forecast-td";
+        td.textContent = h.forecast != null ? h.forecast.toLocaleString() : "—";
+        rows[i].insertBefore(td, rows[i].cells[2]);
+      });
+
+      // Show accuracy metric cards
+      document.getElementById("ov-mae").innerHTML     = `${m.mae ?? "—"}<span class="card-unit"> kW</span>`;
+      document.getElementById("ov-mape").innerHTML    = `${m.mape ?? "—"}<span class="card-unit"> %</span>`;
+      document.getElementById("ov-fc-peak").innerHTML = `${m.forecast_peak != null ? m.forecast_peak.toLocaleString() : "—"}<span class="card-unit"> kW</span>`;
+      document.getElementById("acc-overlay-cards").classList.remove("hidden");
+    } catch (e) {
+      console.warn("_fetchAndShowAccuracy:", e);
+    }
+  }
+
   function copyHourLoad() {
     const rows = document.querySelectorAll('#hourly-tbody tr');
     const lines = ['Hour\tLoad (kW)'];
@@ -809,81 +827,6 @@
       btn.textContent = 'Copied!';
       setTimeout(() => btn.textContent = 'Copy Hour & Load', 2000);
     });
-  }
-
-  // ── Tab 2: Forecast vs Actuals ────────────────────────────────────────
-
-  function showAccMsg(text, type = "error") {
-    const el = document.getElementById("acc-msg");
-    el.textContent = text; el.className = `message ${type}`; el.classList.remove("hidden");
-  }
-  function hideAccMsg() { document.getElementById("acc-msg").classList.add("hidden"); }
-
-  async function getAccuracy() {
-    const dateVal = document.getElementById("acc-date-input").value;
-    if (!dateVal) { showAccMsg("Please select a date."); return; }
-    hideAccMsg();
-    document.getElementById("acc-btn").disabled = true;
-    document.getElementById("acc-results").classList.add("hidden");
-    showAccMsg("Fetching actuals and running forecast…", "info");
-    try {
-      const res  = await fetch(`/api/accuracy?date=${dateVal}`);
-      const data = await res.json();
-      if (!res.ok) { showAccMsg(data.detail ?? "Failed."); return; }
-      hideAccMsg();
-      renderAccuracy(data);
-    } catch (e) {
-      showAccMsg("Network error: " + e.message);
-    } finally {
-      document.getElementById("acc-btn").disabled = false;
-    }
-  }
-
-  function renderAccuracy(data) {
-    const m = data.metrics;
-    document.getElementById("acc-chart-title").textContent = `Forecast vs Actuals — ${data.date}`;
-    document.getElementById("acc-mae").innerHTML           = `${m.mae ?? "—"}<span class="card-unit"> kW</span>`;
-    document.getElementById("acc-mape").innerHTML          = `${m.mape ?? "—"}<span class="card-unit"> %</span>`;
-    document.getElementById("acc-actual-peak").innerHTML   = `${m.actual_peak?.toLocaleString() ?? "—"}<span class="card-unit"> kW</span>`;
-    document.getElementById("acc-forecast-peak").innerHTML = `${m.forecast_peak?.toLocaleString() ?? "—"}<span class="card-unit"> kW</span>`;
-
-    const labels    = data.hourly.map(h => fmt12(h.hour));
-    const actuals   = data.hourly.map(h => h.actual);
-    const forecasts = data.hourly.map(h => h.forecast);
-
-    const tbody = document.getElementById("acc-tbody");
-    tbody.innerHTML = "";
-    data.hourly.forEach(h => {
-      const tr = document.createElement("tr");
-      if (h.actual === m.actual_peak) tr.className = "peak-row";
-      const diffColor = h.diff == null ? "" : h.diff > 0 ? "color:#276749" : "color:#c53030";
-      tr.innerHTML = `
-        <td>${fmt12(h.hour)}</td>
-        <td>${h.actual   != null ? h.actual.toLocaleString()   : "—"}</td>
-        <td>${h.forecast != null ? h.forecast.toLocaleString() : "—"}</td>
-        <td style="${diffColor}">${h.diff != null ? (h.diff > 0 ? "+" : "") + h.diff.toLocaleString() : "—"}</td>
-        <td style="${diffColor}">${h.diff_pct != null ? (h.diff_pct > 0 ? "+" : "") + h.diff_pct + "%" : "—"}</td>`;
-      tbody.appendChild(tr);
-    });
-
-    if (accChart) accChart.destroy();
-    accChart = new Chart(document.getElementById("acc-chart").getContext("2d"), {
-      data: {
-        labels,
-        datasets: [
-          { type: "bar", label: "Actual (kW)",   data: actuals,   backgroundColor: "rgba(56,161,105,0.7)",  borderColor: "rgba(56,161,105,1)",  borderWidth: 1, yAxisID: "y", order: 2 },
-          { type: "bar", label: "Forecast (kW)", data: forecasts, backgroundColor: "rgba(43,108,176,0.55)", borderColor: "rgba(43,108,176,1)",  borderWidth: 1, yAxisID: "y", order: 1 },
-        ],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        interaction: { mode: "index", intersect: false },
-        plugins: { legend: { position: "top" } },
-        scales: { y: { title: { display: true, text: "Load (kW)" }, beginAtZero: false } },
-      },
-    });
-
-    document.getElementById("acc-results").classList.remove("hidden");
   }
 
   // ── Tabs 3+: Solar Plants (generic) ──────────────────────────────────
