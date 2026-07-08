@@ -1486,88 +1486,25 @@ def _next_15_past() -> float:
     return time.monotonic() + (target - now).total_seconds()
 
 
-def _parse_hourlylog(content: bytes) -> dict:
-    """Parse UAMPS hourlylog.xls (tab-separated text) — returns {hr(1-24): meters_kw}."""
-    for enc in ("utf-8", "latin-1"):
-        try:
-            lines = content.decode(enc).splitlines()
-            # Find the first header row where col[0]="HOUR" and col[1]="METERS"
-            header_idx = None
-            for i, line in enumerate(lines):
-                cols = [c.strip().upper() for c in line.split("\t")]
-                if len(cols) >= 2 and cols[0] == "HOUR" and cols[1] == "METERS":
-                    header_idx = i
-                    break
-            if header_idx is None:
-                continue
-            result = {}
-            for line in lines[header_idx + 1:]:
-                cols = [c.strip() for c in line.split("\t")]
-                if not cols or cols[0].upper() in ("", "TOTAL", "TAGS", "UAMPS", "HOUR"):
-                    break
-                try:
-                    hr = int(cols[0])
-                    if not (1 <= hr <= 24):
-                        continue
-                    meters = int(cols[1]) if cols[1] else 0
-                    if meters > 0:
-                        result[hr] = meters
-                except (ValueError, IndexError):
-                    continue
-            if result:
-                return result
-        except Exception:
-            pass
-    return {}
-
-
-def _fetch_realtime_sync() -> dict:
-    import requests as _req
-    import urllib3 as _u3
-    _u3.disable_warnings()
-    uid = os.environ.get("UAMPS_USER_ID", "").strip()
-    pwd = os.environ.get("UAMPS_PASSWORD", "").strip()
-    if not uid or not pwd:
-        logger.warning("realtime_load: UAMPS_USER_ID or UAMPS_PASSWORD not set")
-        return {}
-    logger.info(f"realtime_load: logging in as {uid} (pwd len={len(pwd)})")
-    sess = _req.Session()
-    sess.headers["User-Agent"] = "Mozilla/5.0"
-    sess.verify = False
-    try:
-        r = sess.post("https://px.uamps.com/cgi-bin/wwiz.asp", data={
-            "wwizmstr": "WEB.LOGIN", "WWIZ_FORMNO": "0",
-            "user": uid, "pwd": pwd, "Submit": "Submit",
-        }, timeout=30)
-        logger.info(f"realtime_load: login response status={r.status_code} logoff={'logoff' in r.text.lower()}")
-    except Exception as exc:
-        logger.warning(f"realtime_load: login request failed: {exc}")
-        return {}
-    if "logoff" not in r.text.lower():
-        logger.warning("realtime_load: UAMPS login failed — bad credentials or network block")
-        return {}
-    try:
-        r2 = sess.get("https://px.uamps.com/members/lehi/hourlylog.xls", timeout=30)
-        r2.raise_for_status()
-        logger.info(f"realtime_load: fetched hourlylog ({len(r2.content)} bytes)")
-    except Exception as exc:
-        logger.warning(f"realtime_load: hourlylog fetch failed: {exc}")
-        return {}
-    return _parse_hourlylog(r2.content)
+_REALTIME_JSON_URL = "https://raw.githubusercontent.com/crobinson111/lehi-load-forecast/master/data/realtime_load.json"
 
 
 @app.get("/api/realtime_load")
 async def api_realtime_load():
     if time.monotonic() < _realtime_cache["expires"]:
         return _realtime_cache["data"]
+    tz = ZoneInfo("America/Denver")
+    today = datetime.now(tz).strftime("%Y-%m-%d")
+    data: dict = {}
     try:
-        loop = asyncio.get_event_loop()
-        data = await asyncio.wait_for(
-            loop.run_in_executor(None, _fetch_realtime_sync),
-            timeout=45.0,
-        )
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(_REALTIME_JSON_URL)
+            r.raise_for_status()
+            payload = r.json()
+        if payload.get("date") == today:
+            data = {int(k): v for k, v in payload.get("hours", {}).items()}
     except Exception as exc:
-        logger.warning(f"realtime_load fetch error: {exc}")
+        logger.warning(f"realtime_load: failed to fetch JSON: {exc}")
         data = _realtime_cache["data"]
     _realtime_cache.update({"expires": _next_15_past(), "data": data})
     return data
