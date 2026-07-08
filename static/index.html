@@ -451,6 +451,26 @@
           <div class="card-label">Total Daily Generation</div>
           <div class="card-value" id="supply-day-total">—<span class="card-unit">kWh</span></div>
         </div>
+        <div class="card peak">
+          <div class="card-label">Peak Load</div>
+          <div class="card-value" id="supply-peak-load">—<span class="card-unit">kW</span></div>
+        </div>
+        <div class="card hour">
+          <div class="card-label">Peak Hour</div>
+          <div class="card-value" id="supply-peak-hour">—</div>
+        </div>
+        <div class="card min">
+          <div class="card-label">Min Load</div>
+          <div class="card-value" id="supply-min-load">—<span class="card-unit">kW</span></div>
+        </div>
+        <div class="card hour">
+          <div class="card-label">Min Hour</div>
+          <div class="card-value" id="supply-min-hour">—</div>
+        </div>
+        <div class="card avg">
+          <div class="card-label">Avg Load</div>
+          <div class="card-value" id="supply-avg-load">—<span class="card-unit">kW</span></div>
+        </div>
       </div>
       <div class="chart-wrap">
         <div class="chart-title" id="supply-chart-title">Supply Portfolio</div>
@@ -1052,6 +1072,21 @@
       `Supply Portfolio — ${data.date} (${isHistorical ? "Historical" : "Forecast"})`;
     document.getElementById("supply-day-total").innerHTML =
       `${data.day_total != null ? Math.round(data.day_total).toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
+
+    const loadHours = data.hourly.filter(h => h.load != null);
+    if (loadHours.length > 0) {
+      const peakH = loadHours.reduce((a, b) => b.load > a.load ? b : a);
+      const minH  = loadHours.reduce((a, b) => b.load < a.load ? b : a);
+      const avg   = Math.round(loadHours.reduce((s, h) => s + h.load, 0) / loadHours.length);
+      document.getElementById("supply-peak-load").innerHTML = `${Math.round(peakH.load).toLocaleString()}<span class="card-unit"> kW</span>`;
+      document.getElementById("supply-peak-hour").textContent = fmt12(peakH.hour);
+      document.getElementById("supply-min-load").innerHTML  = `${Math.round(minH.load).toLocaleString()}<span class="card-unit"> kW</span>`;
+      document.getElementById("supply-min-hour").textContent = fmt12(minH.hour);
+      document.getElementById("supply-avg-load").innerHTML  = `${avg.toLocaleString()}<span class="card-unit"> kW</span>`;
+    } else {
+      ["supply-peak-load","supply-peak-hour","supply-min-load","supply-min-hour","supply-avg-load"]
+        .forEach(id => { document.getElementById(id).innerHTML = "—"; });
+    }
 
     const warnEl = document.getElementById("supply-warnings");
     const warns = [...(data.solar_warnings ?? [])];
