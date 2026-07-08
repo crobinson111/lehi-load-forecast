@@ -1472,6 +1472,94 @@ async def _safe_fetch_load_wx(target_date: str, dt: date) -> dict:
         return {}
 
 
+_realtime_cache: dict = {"ts": 0.0, "data": {}}
+_REALTIME_TTL = 1800.0  # 30 minutes
+
+
+def _parse_hourlylog(content: bytes) -> dict:
+    """Parse UAMPS hourlylog.xls — returns {hr(1-24): meters_kw}."""
+    def _extract(df) -> dict:
+        for i in range(min(10, len(df))):
+            vals = [str(v).strip().upper() for v in df.iloc[i].values]
+            if "HOUR" in vals and "METERS" in vals:
+                sub = df.iloc[i + 1:].copy()
+                sub.columns = vals
+                result = {}
+                for _, row in sub.iterrows():
+                    hr = pd.to_numeric(row.get("HOUR"), errors="coerce")
+                    if pd.isna(hr) or not (1 <= hr <= 24):
+                        continue
+                    m = pd.to_numeric(row.get("METERS"), errors="coerce")
+                    if pd.notna(m) and m > 0:
+                        result[int(hr)] = int(m)
+                if result:
+                    return result
+        return {}
+
+    # Try HTML first (old ASP portals often return HTML with .xls extension)
+    for enc in ("utf-8", "latin-1"):
+        try:
+            text = content.decode(enc, errors="replace")
+            tables = pd.read_html(io.StringIO(text))
+            for t in tables:
+                flat = " ".join(str(v).upper() for row in t.values for v in row if pd.notna(v))
+                if "HOUR" in flat and "METERS" in flat:
+                    r = _extract(t)
+                    if r:
+                        return r
+        except Exception:
+            pass
+    # Binary Excel fallback
+    try:
+        r = _extract(pd.read_excel(io.BytesIO(content), header=None))
+        if r:
+            return r
+    except Exception as exc:
+        logger.warning(f"realtime_load binary Excel fallback failed: {exc}")
+    return {}
+
+
+def _fetch_realtime_sync() -> dict:
+    import requests as _req
+    import urllib3 as _u3
+    _u3.disable_warnings()
+    uid = os.environ.get("UAMPS_USER_ID", "")
+    pwd = os.environ.get("UAMPS_PASSWORD", "")
+    if not uid or not pwd:
+        return {}
+    sess = _req.Session()
+    sess.headers["User-Agent"] = "Mozilla/5.0"
+    sess.verify = False
+    r = sess.post("https://px.uamps.com/cgi-bin/wwiz.asp", data={
+        "wwizmstr": "WEB.LOGIN", "WWIZ_FORMNO": "0",
+        "user": uid, "pwd": pwd, "Submit": "Submit",
+    }, timeout=30)
+    if "logoff" not in r.text.lower():
+        logger.warning("realtime_load: UAMPS login failed")
+        return {}
+    r2 = sess.get("https://px.uamps.com/members/lehi/hourlylog.xls", timeout=30)
+    r2.raise_for_status()
+    return _parse_hourlylog(r2.content)
+
+
+@app.get("/api/realtime_load")
+async def api_realtime_load():
+    now = time.monotonic()
+    if now - _realtime_cache["ts"] < _REALTIME_TTL:
+        return _realtime_cache["data"]
+    try:
+        loop = asyncio.get_event_loop()
+        data = await asyncio.wait_for(
+            loop.run_in_executor(None, _fetch_realtime_sync),
+            timeout=45.0,
+        )
+    except Exception as exc:
+        logger.warning(f"realtime_load fetch error: {exc}")
+        data = _realtime_cache["data"]
+    _realtime_cache.update({"ts": now, "data": data})
+    return data
+
+
 @app.get("/api/supply")
 async def supply_portfolio(
     target_date: str = Query(..., alias="date", description="YYYY-MM-DD"),

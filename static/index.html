@@ -547,12 +547,14 @@
 </main>
 
 <script>
-  let chart        = null;
-  let accChart     = null;
-  let supplyChart  = null;
-  let _supplyData  = null;
-  let _supplyGen   = {};
-  let _fillDrag    = null;
+  let chart           = null;
+  let accChart        = null;
+  let supplyChart     = null;
+  let _supplyData     = null;
+  let _supplyGen      = {};
+  let _fillDrag       = null;
+  let _liveTimer      = null;
+  let _liveForecastData = null;
   const solarCharts = {};
 
   const today = new Date();
@@ -654,6 +656,7 @@
   }
 
   function renderForecast(data) {
+    if (_liveTimer) { clearTimeout(_liveTimer); _liveTimer = null; }
     history.pushState(null, "", `/?date=${data.date}`);
     const isHistorical = data.type === "historical";
     const s = data.summary;
@@ -675,6 +678,9 @@
     document.getElementById("chart-title").textContent =
       isHistorical ? `Historical Report — ${data.date}` : `Load Forecast — ${data.date}`;
     document.getElementById("load-col-header").textContent = isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)";
+    // Reset live-data column from any prior render
+    document.querySelector("#hourly-table thead tr").innerHTML =
+      `<th>Hour</th><th id="load-col-header">${isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)"}</th><th>Temp (°F)</th>`;
 
     const tbody = document.getElementById("hourly-tbody");
     tbody.innerHTML = "";
@@ -717,6 +723,73 @@
     });
 
     document.getElementById("results").classList.remove("hidden");
+
+    // Overlay live actuals for today
+    if (data.date === todayStr) {
+      _liveForecastData = data;
+      _fetchAndShowLive();
+    }
+  }
+
+  async function _fetchAndShowLive() {
+    if (!_liveForecastData) return;
+    try {
+      const res = await fetch("/api/realtime_load");
+      if (!res.ok) return;
+      const actual = await res.json(); // {1: kw, 2: kw, ...}
+      const keys = Object.keys(actual).map(Number);
+      if (!keys.length) return;
+      const maxHr = Math.max(...keys);
+
+      // Build per-hour array (0-indexed, hr+1 → actual key)
+      const actualArr = _liveForecastData.hourly.map(h => actual[h.hour + 1] ?? null);
+
+      // Update chart — replace existing live dataset or add new
+      if (chart) {
+        const idx = chart.data.datasets.findIndex(d => d.label === "Actual (live)");
+        const ds = {
+          type: "bar", label: "Actual (live)",
+          data: actualArr,
+          backgroundColor: "rgba(56,161,105,0.8)",
+          borderColor: "rgba(56,161,105,1)",
+          borderWidth: 1, yAxisID: "yLoad", order: 1,
+        };
+        if (idx >= 0) { chart.data.datasets[idx] = ds; }
+        else { chart.data.datasets.push(ds); }
+        chart.update();
+      }
+
+      // Add/update Actual column header
+      const thead = document.querySelector("#hourly-table thead tr");
+      if (!thead.querySelector(".live-th")) {
+        const th = document.createElement("th");
+        th.className = "live-th"; th.textContent = "Actual (kW)";
+        th.style.color = "#276749";
+        thead.appendChild(th);
+      }
+
+      // Add/update Actual cells in each body row
+      const rows = document.querySelectorAll("#hourly-tbody tr");
+      _liveForecastData.hourly.forEach((h, i) => {
+        const row = rows[i]; if (!row) return;
+        let td = row.querySelector(".live-td");
+        if (!td) { td = document.createElement("td"); td.className = "live-td"; row.appendChild(td); }
+        const val = actual[h.hour + 1];
+        td.textContent = val != null ? val.toLocaleString() : "—";
+        td.style.color = val != null ? "#276749" : "#a0aec0";
+      });
+
+      // Update title to show live status
+      document.getElementById("chart-title").textContent =
+        `Load Forecast — ${_liveForecastData.date}  ·  Live through HE ${maxHr}`;
+
+      // Re-fetch in 30 min if still on today
+      if (_liveTimer) clearTimeout(_liveTimer);
+      _liveTimer = setTimeout(() => {
+        if (document.getElementById("date-input").value === todayStr) _fetchAndShowLive();
+      }, 30 * 60 * 1000);
+
+    } catch { /* live data is optional — fail silently */ }
   }
 
   function copyHourLoad() {
