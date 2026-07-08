@@ -32,7 +32,8 @@ if "logoff" not in r.text.lower():
 r2 = sess.get("https://px.uamps.com/members/lehi/hourlylog.xls", timeout=30)
 r2.raise_for_status()
 
-hours = {}
+# Parse METERS column from hourlylog
+raw_meters = {}
 lines = r2.content.decode("utf-8", errors="replace").splitlines()
 header_idx = None
 for i, line in enumerate(lines):
@@ -52,9 +53,42 @@ if header_idx is not None:
                 continue
             meters = int(cols[1]) if cols[1] else 0
             if meters > 0:
-                hours[str(hr)] = meters
+                raw_meters[hr] = meters
         except (ValueError, IndexError):
             continue
+
+# Fetch meter 1522 + 1524 from hourlymet (generation UAMPS subtracts from METERS)
+gen_by_hour = {}
+try:
+    r3 = sess.get("https://px.uamps.com/members/lehi//hourlymet.xls", timeout=30)
+    r3.raise_for_status()
+    met_lines = r3.content.decode("utf-8", errors="replace").splitlines()
+    if met_lines:
+        met_cols = [c.strip() for c in met_lines[0].split("\t")]
+        idx_hr   = met_cols.index("Hr")
+        idx_1522 = met_cols.index("1522")
+        idx_1524 = met_cols.index("1524")
+        for line in met_lines[1:]:
+            parts = [c.strip() for c in line.split("\t")]
+            if not parts or not parts[0]:
+                continue
+            try:
+                hr = int(parts[idx_hr])
+                if not (1 <= hr <= 24):
+                    continue
+                v1522 = int(parts[idx_1522]) if len(parts) > idx_1522 and parts[idx_1522] else 0
+                v1524 = int(parts[idx_1524]) if len(parts) > idx_1524 and parts[idx_1524] else 0
+                gen_by_hour[hr] = v1522 + v1524
+            except (ValueError, IndexError):
+                continue
+except Exception as exc:
+    print(f"WARNING: Could not fetch hourlymet.xls: {exc}")
+
+# Combine: adjusted load = METERS + generation
+hours = {}
+for hr, meters in raw_meters.items():
+    gen = gen_by_hour.get(hr, 0)
+    hours[str(hr)] = meters + gen
 
 tz = ZoneInfo("America/Denver")
 now = datetime.now(tz)
