@@ -1477,45 +1477,37 @@ _REALTIME_TTL = 1800.0  # 30 minutes
 
 
 def _parse_hourlylog(content: bytes) -> dict:
-    """Parse UAMPS hourlylog.xls — returns {hr(1-24): meters_kw}."""
-    def _extract(df) -> dict:
-        for i in range(min(10, len(df))):
-            vals = [str(v).strip().upper() for v in df.iloc[i].values]
-            if "HOUR" in vals and "METERS" in vals:
-                sub = df.iloc[i + 1:].copy()
-                sub.columns = vals
-                result = {}
-                for _, row in sub.iterrows():
-                    hr = pd.to_numeric(row.get("HOUR"), errors="coerce")
-                    if pd.isna(hr) or not (1 <= hr <= 24):
-                        continue
-                    m = pd.to_numeric(row.get("METERS"), errors="coerce")
-                    if pd.notna(m) and m > 0:
-                        result[int(hr)] = int(m)
-                if result:
-                    return result
-        return {}
-
-    # Try HTML first (old ASP portals often return HTML with .xls extension)
+    """Parse UAMPS hourlylog.xls (tab-separated text) — returns {hr(1-24): meters_kw}."""
     for enc in ("utf-8", "latin-1"):
         try:
-            text = content.decode(enc, errors="replace")
-            tables = pd.read_html(io.StringIO(text))
-            for t in tables:
-                flat = " ".join(str(v).upper() for row in t.values for v in row if pd.notna(v))
-                if "HOUR" in flat and "METERS" in flat:
-                    r = _extract(t)
-                    if r:
-                        return r
+            lines = content.decode(enc).splitlines()
+            # Find the first header row where col[0]="HOUR" and col[1]="METERS"
+            header_idx = None
+            for i, line in enumerate(lines):
+                cols = [c.strip().upper() for c in line.split("\t")]
+                if len(cols) >= 2 and cols[0] == "HOUR" and cols[1] == "METERS":
+                    header_idx = i
+                    break
+            if header_idx is None:
+                continue
+            result = {}
+            for line in lines[header_idx + 1:]:
+                cols = [c.strip() for c in line.split("\t")]
+                if not cols or cols[0].upper() in ("", "TOTAL", "TAGS", "UAMPS", "HOUR"):
+                    break
+                try:
+                    hr = int(cols[0])
+                    if not (1 <= hr <= 24):
+                        continue
+                    meters = int(cols[1]) if cols[1] else 0
+                    if meters > 0:
+                        result[hr] = meters
+                except (ValueError, IndexError):
+                    continue
+            if result:
+                return result
         except Exception:
             pass
-    # Binary Excel fallback
-    try:
-        r = _extract(pd.read_excel(io.BytesIO(content), header=None))
-        if r:
-            return r
-    except Exception as exc:
-        logger.warning(f"realtime_load binary Excel fallback failed: {exc}")
     return {}
 
 
