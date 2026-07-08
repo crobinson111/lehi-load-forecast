@@ -221,14 +221,14 @@
     body.filling { user-select: none; cursor: crosshair; }
 
     /* Sticky Hour + HE columns in gen-sch table */
-    #gen-sch-table th:nth-child(1),
-    #gen-sch-table th:nth-child(2) { position: sticky; z-index: 2; }
+    #gen-sch-table thead tr:first-child th:nth-child(1),
+    #gen-sch-table thead tr:first-child th:nth-child(2) { position: sticky; z-index: 3; background: #f7fafc; }
     #gen-sch-table td:nth-child(1),
     #gen-sch-table td:nth-child(2) { position: sticky; z-index: 1; background: #fff; }
     #gen-sch-table tr:last-child td:nth-child(1),
     #gen-sch-table tr:last-child td:nth-child(2) { background: #f7fafc; }
-    #gen-sch-table th:nth-child(1), #gen-sch-table td:nth-child(1) { left: 0; }
-    #gen-sch-table th:nth-child(2), #gen-sch-table td:nth-child(2) { left: 72px; box-shadow: 2px 0 4px rgba(0,0,0,.07); }
+    #gen-sch-table thead tr:first-child th:nth-child(1), #gen-sch-table td:nth-child(1) { left: 0; }
+    #gen-sch-table thead tr:first-child th:nth-child(2), #gen-sch-table td:nth-child(2) { left: 72px; box-shadow: 2px 0 4px rgba(0,0,0,.07); }
 
     /* Date chip */
     .date-chip {
