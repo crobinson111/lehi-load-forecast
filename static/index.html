@@ -205,6 +205,21 @@
     .gen-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
     .gen-input[type=number] { -moz-appearance: textfield; }
 
+    /* Fill handle */
+    .gen-td-inner { position: relative; display: inline-block; }
+    .fill-handle {
+      position: absolute; bottom: -3px; right: -3px;
+      width: 7px; height: 7px;
+      background: #3182ce; border: 1.5px solid white;
+      cursor: crosshair; display: none; z-index: 5;
+    }
+    .gen-td-inner:hover .fill-handle,
+    .gen-td-inner:focus-within .fill-handle,
+    .fill-dragging .fill-handle { display: block; }
+    tr.fill-target td { background: rgba(49,130,206,0.07) !important; }
+    tr.fill-target .gen-input { border-color: #3182ce !important; }
+    body.filling { user-select: none; cursor: crosshair; }
+
     /* Sticky Hour + HE columns in gen-sch table */
     #gen-sch-table th:nth-child(1),
     #gen-sch-table th:nth-child(2) { position: sticky; z-index: 2; }
@@ -537,6 +552,7 @@
   let supplyChart  = null;
   let _supplyData  = null;
   let _supplyGen   = {};
+  let _fillDrag    = null;
   const solarCharts = {};
 
   const today = new Date();
@@ -1178,7 +1194,13 @@
       inp.type = "number"; inp.className = "gen-input";
       inp.value = gen || ""; inp.placeholder = "0";
       inp.addEventListener("input", () => _onGenInput(h.hour, inp.value));
-      tr.querySelector(`.gen-td-${h.hour}`).appendChild(inp);
+      const handle = document.createElement("div");
+      handle.className = "fill-handle"; handle.title = "Drag to fill";
+      const inner = document.createElement("div");
+      inner.className = "gen-td-inner";
+      inner.appendChild(inp); inner.appendChild(handle);
+      tr.querySelector(`.gen-td-${h.hour}`).appendChild(inner);
+      tr.dataset.hour = h.hour;
       tbody.appendChild(tr);
     });
 
@@ -1317,6 +1339,52 @@
     btn.disabled = true;
     setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
   }
+
+  // ── GEN fill-down drag ────────────────────────────────────────────────
+
+  document.addEventListener("mousedown", e => {
+    if (!e.target.classList.contains("fill-handle")) return;
+    e.preventDefault();
+    const tr = e.target.closest("tr[data-hour]");
+    if (!tr) return;
+    _fillDrag = { fromHour: parseInt(tr.dataset.hour), toHour: parseInt(tr.dataset.hour) };
+    e.target.closest(".gen-td-inner").classList.add("fill-dragging");
+    document.body.classList.add("filling");
+  });
+
+  document.addEventListener("mousemove", e => {
+    if (!_fillDrag) return;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const tr = el?.closest("#supply-tbody tr[data-hour]");
+    if (!tr) return;
+    const toHour = parseInt(tr.dataset.hour);
+    if (isNaN(toHour) || toHour === _fillDrag.toHour) return;
+    _fillDrag.toHour = toHour;
+    const lo = Math.min(_fillDrag.fromHour, _fillDrag.toHour);
+    const hi = Math.max(_fillDrag.fromHour, _fillDrag.toHour);
+    document.querySelectorAll("#supply-tbody tr[data-hour]").forEach(row => {
+      const h = parseInt(row.dataset.hour);
+      row.classList.toggle("fill-target", h >= lo && h <= hi && h !== _fillDrag.fromHour);
+    });
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!_fillDrag) return;
+    const { fromHour, toHour } = _fillDrag;
+    const srcInp = document.querySelector(`.gen-td-${fromHour} input`);
+    const value  = srcInp?.value ?? "";
+    const lo = Math.min(fromHour, toHour);
+    const hi = Math.max(fromHour, toHour);
+    for (let h = lo; h <= hi; h++) {
+      if (h === fromHour) continue;
+      const inp = document.querySelector(`.gen-td-${h} input`);
+      if (inp) { inp.value = value; _onGenInput(h, value); }
+    }
+    document.querySelectorAll("#supply-tbody tr[data-hour]").forEach(r => r.classList.remove("fill-target"));
+    document.querySelector(".fill-dragging")?.classList.remove("fill-dragging");
+    document.body.classList.remove("filling");
+    _fillDrag = null;
+  });
 
   // ── Init ──────────────────────────────────────────────────────────────
   checkStatus();
