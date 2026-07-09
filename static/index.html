@@ -591,12 +591,41 @@
 
   async function retrain() {
     try {
-      await fetch("/api/train", { method: "POST" });
-      showMsg("Retraining started — this may take a minute.", "info");
-      setTimeout(checkStatus, 2000);
+      const res = await fetch("/api/train", { method: "POST" });
+      if (!res.ok) { showMsg("Failed to start retraining."); return; }
+      // Immediately reflect retraining state — don't wait for a poll
+      document.getElementById("status-dot").className    = "dot yellow";
+      document.getElementById("status-text").textContent = "Retraining model…";
+      document.getElementById("status-detail").textContent = "";
+      _pollUntilTrained();
     } catch {
       showMsg("Failed to start retraining.");
     }
+  }
+
+  function _pollUntilTrained() {
+    setTimeout(async () => {
+      try {
+        const res = await fetch("/api/status");
+        const s   = await res.json();
+        if (s.training) {
+          _pollUntilTrained(); // still going — keep polling
+        } else if (s.trained) {
+          document.getElementById("status-dot").className    = "dot green";
+          document.getElementById("status-text").textContent = "Model ready";
+          document.getElementById("status-detail").textContent =
+            `${s.record_count.toLocaleString()} samples · ${s.date_range?.[0]} – ${s.date_range?.[1]} · R² ${s.r2}`;
+          showMsg("Retrain complete — model is ready.", "info");
+        } else {
+          document.getElementById("status-dot").className    = "dot red";
+          document.getElementById("status-text").textContent = "Training failed";
+          document.getElementById("status-detail").textContent = s.error ?? "";
+          showMsg("Retrain failed: " + (s.error ?? "unknown error"));
+        }
+      } catch {
+        _pollUntilTrained(); // network hiccup — keep trying
+      }
+    }, 2000);
   }
 
   // ── Tab 1: Forecast ───────────────────────────────────────────────────
