@@ -428,6 +428,9 @@
       </div>
       <button class="btn-primary" id="supply-btn" onclick="getSupply()">Get Supply Portfolio</button>
       <button class="btn-secondary" id="supply-load-sch-btn" onclick="loadScheduleToGenSch()" title="Commit this GEN schedule to Gen Sch tab">Load Schedule</button>
+      <span id="supply-dths" class="hidden" style="margin-left:.75rem;font-size:.95rem;color:#2d3748;align-self:center">
+        DTHs: <strong id="supply-dths-val">—</strong>
+      </span>
     </div>
     <div id="supply-msg" class="hidden message"></div>
     <div id="supply-results" class="hidden">
@@ -1109,6 +1112,9 @@
       `Supply Portfolio — ${data.date} (${isHistorical ? "Historical" : "Forecast"})`;
     document.getElementById("supply-day-total").innerHTML =
       `${data.day_total != null ? Math.round(data.day_total).toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
+    const dths = data.day_total != null ? (data.day_total * 0.0093).toFixed(1) : null;
+    document.getElementById("supply-dths-val").textContent = dths != null ? parseFloat(dths).toLocaleString(undefined, {maximumFractionDigits: 1}) : "—";
+    document.getElementById("supply-dths").classList.remove("hidden");
 
     const loadHours = data.hourly.filter(h => h.load != null);
     if (loadHours.length > 0) {
