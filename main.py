@@ -939,6 +939,12 @@ def build_features(hr_1_to_24: int, temp_f: float, apparent_f: float, date_str: 
     school_x_sin_doy = is_school_out * sin_doy
     school_x_cos_doy = is_school_out * cos_doy
 
+    # Year-over-year load growth trend. Without this, Ridge averages 2024/2025/2026
+    # observations together and systematically underpredicts the current year.
+    # Expressed as decimal years since 2024 so the coefficient is interpretable
+    # (~kW per year of city load growth).
+    year_trend = d.year + d.timetuple().tm_yday / 365.25 - 2024.0
+
     return np.array([[
         sin_hr,  cos_hr,
         sin_hr2, cos_hr2,
@@ -953,6 +959,7 @@ def build_features(hr_1_to_24: int, temp_f: float, apparent_f: float, date_str: 
         is_school_out,
         school_x_sin_doy,   # summer school-out vs winter break behave differently
         school_x_cos_doy,
+        year_trend,
     ]])
 
 
