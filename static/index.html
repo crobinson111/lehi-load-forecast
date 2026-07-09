@@ -1061,10 +1061,21 @@
     localStorage.setItem("lehi_gen_" + dateStr, JSON.stringify(vals));
   }
 
+  function _updateDths() {
+    const genTotal = Object.values(_supplyGen).reduce((s, v) => s + (Number(v) || 0), 0);
+    const el  = document.getElementById("supply-dths");
+    const val = document.getElementById("supply-dths-val");
+    el.classList.remove("hidden");
+    val.textContent = genTotal > 0
+      ? (genTotal * 0.0093).toLocaleString(undefined, {maximumFractionDigits: 1})
+      : "—";
+  }
+
   function _onGenInput(hour, rawVal) {
     const gen = parseFloat(rawVal) || 0;
     _supplyGen[hour] = gen;
     _saveGen(_supplyData.date, _supplyGen);
+    _updateDths();
     const h      = _supplyData.hourly[hour];
     const newTot = h.total + gen;
     document.getElementById("sply-tot-" + hour).textContent = Math.round(newTot).toLocaleString();
@@ -1141,9 +1152,6 @@
       `Supply Portfolio — ${data.date} (${isHistorical ? "Historical" : "Forecast"})`;
     document.getElementById("supply-day-total").innerHTML =
       `${data.day_total != null ? Math.round(data.day_total).toLocaleString() : "—"}<span class="card-unit"> kWh</span>`;
-    const dths = data.day_total != null ? (data.day_total * 0.0093).toFixed(1) : null;
-    document.getElementById("supply-dths-val").textContent = dths != null ? parseFloat(dths).toLocaleString(undefined, {maximumFractionDigits: 1}) : "—";
-    document.getElementById("supply-dths").classList.remove("hidden");
 
     const loadHours = data.hourly.filter(h => h.load != null);
     if (loadHours.length > 0) {
@@ -1224,6 +1232,7 @@
 
     _supplyData = data;
     _supplyGen  = _loadGen(data.date);
+    _updateDths();
 
     const tbody = document.getElementById("supply-tbody");
     tbody.innerHTML = "";
