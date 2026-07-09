@@ -995,8 +995,15 @@ async def train_model() -> None:
         X = np.vstack(train_df.apply(lambda r: build_features(r["hr"], r["temp_f"], r["apparent_f"], r["date"])[0], axis=1).values)
         y = train_df["load"].values
 
+        # Exponential decay: recent observations have more influence.
+        # Half-life of 90 days means last week weighs ~2x a day from 3 months ago
+        # and ~30x a day from 2 years ago.
+        max_date = pd.to_datetime(train_df["date"].max())
+        days_ago = (max_date - pd.to_datetime(train_df["date"])).dt.days.values
+        sample_weights = np.exp(-days_ago / 90.0)
+
         mdl = Pipeline([("scaler", StandardScaler()), ("ridge", Ridge(alpha=10.0))])
-        mdl.fit(X, y)
+        mdl.fit(X, y, ridge__sample_weight=sample_weights)
         r2 = float(mdl.score(X, y))
 
         # Build historical lookup: {date: {om_hour (0-23): load}}
