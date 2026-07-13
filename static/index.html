@@ -504,7 +504,7 @@
     </div>
     <div id="gen-sch-chips" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.25rem;min-height:1rem"></div>
     <div id="gen-sch-msg" class="message info hidden">No schedules loaded yet. Use "Load Schedule" on the Supply Portfolio tab.</div>
-    <div id="gen-sch-results" class="hidden">
+    <div id="gen-sch-results" style="display:none">
       <div class="chart-wrap">
         <div class="chart-title" id="gen-sch-title">Generation Schedule</div>
         <div style="overflow-x:auto">
@@ -1345,63 +1345,68 @@
   function loadGenSch() {
     const dates  = _getLoadedDates();
     const msgEl  = document.getElementById("gen-sch-msg");
+    const resEl  = document.getElementById("gen-sch-results");
     _renderGenSchChips(dates);
     if (dates.length === 0) {
-      msgEl.classList.remove("hidden");
-      document.getElementById("gen-sch-results").classList.add("hidden");
+      if (msgEl) msgEl.style.display = "";
+      if (resEl) resEl.style.display = "none";
       return;
     }
-    msgEl.classList.add("hidden");
+    if (msgEl) msgEl.style.display = "none";
+    if (resEl) resEl.style.display = "";
+
     const sorted = [...dates].sort();
     document.getElementById("gen-sch-title").textContent =
       "Generation Schedule — " + sorted.map(_genSchFmtDate).join(", ");
+
     const thead = document.getElementById("gen-sch-thead");
-    const dayBg  = i => i % 2 === 1 ? "#edf2f7" : "";
-    const dayBg2 = i => i % 2 === 1 ? "#f7fafc" : "";
-    thead.innerHTML =
-      `<tr>` +
-        `<th rowspan="2" style="vertical-align:middle">Hour</th>` +
-        `<th rowspan="2" style="vertical-align:middle">HE</th>` +
-        sorted.map((d, i) =>
-          `<th colspan="2" style="text-align:center;border-left:2px solid #e2e8f0;${dayBg(i) ? `background:${dayBg(i)}` : ""}">` +
-          `${_genSchFmtDate(d)}<br><span style="font-weight:400;font-size:.7rem;text-transform:none;letter-spacing:0">${d}</span></th>`
-        ).join("") +
-      `</tr>` +
-      `<tr>` +
-        sorted.map((d, i) =>
-          `<th style="border-left:2px solid #e2e8f0;${dayBg(i) ? `background:${dayBg(i)}` : ""}">kWh</th>` +
-          `<th style="color:#718096;font-weight:500;${dayBg(i) ? `background:${dayBg(i)}` : ""}">Engines</th>`
-        ).join("") +
-      `</tr>`;
+    const dayBg = i => i % 2 === 1 ? "#edf2f7" : "";
+
+    let hdr1 = "<tr><th rowspan='2' style='vertical-align:middle'>Hour</th><th rowspan='2' style='vertical-align:middle'>HE</th>";
+    let hdr2 = "<tr>";
+    sorted.forEach((d, i) => {
+      const bg = dayBg(i) ? " background:" + dayBg(i) : "";
+      hdr1 += "<th colspan='2' style='text-align:center;border-left:2px solid #e2e8f0;" + bg + "'>" +
+        _genSchFmtDate(d) + "<br><span style='font-weight:400;font-size:.7rem'>" + d + "</span></th>";
+      hdr2 += "<th style='border-left:2px solid #e2e8f0;" + bg + "'>kWh</th>" +
+        "<th style='color:#718096;font-weight:500;" + bg + "'>Engines</th>";
+    });
+    hdr1 += "</tr>";
+    hdr2 += "</tr>";
+    thead.innerHTML = hdr1 + hdr2;
+
     const tbody = document.getElementById("gen-sch-tbody");
     tbody.innerHTML = "";
+
     for (let hr = 0; hr < 24; hr++) {
       const tr = document.createElement("tr");
-      let cols = `<td>${fmt12(hr)}</td><td>${hr + 1}</td>`;
+      let cols = "<td>" + fmt12(hr) + "</td><td>" + (hr + 1) + "</td>";
       sorted.forEach((d, i) => {
         const gen = _loadGenLoaded(d);
         const val = gen[hr] || 0;
-        const eng = val ? _engineLabel(val) : "";
+        const eng = val ? (_engineLabel(val) || "") : "";
         const bg  = i % 2 === 1 ? "background:#f7fafc;" : "";
-        cols += `<td style="text-align:right;border-left:2px solid #e2e8f0;${bg}">${val ? Math.round(val).toLocaleString() : "—"}</td>`;
-        cols += `<td style="color:#4a5568;font-size:.82rem;${bg}">${eng}</td>`;
+        cols += "<td style='text-align:right;border-left:2px solid #e2e8f0;" + bg + "'>" +
+          (val ? Math.round(val).toLocaleString() : "—") + "</td>";
+        cols += "<td style='color:#4a5568;font-size:.82rem;" + bg + "'>" + eng + "</td>";
       });
       tr.innerHTML = cols;
       tbody.appendChild(tr);
     }
+
     const trT = document.createElement("tr");
     trT.style.cssText = "font-weight:700;background:#f7fafc";
-    let totCols = `<td>Daily Total</td><td></td>`;
+    let totCols = "<td>Daily Total</td><td></td>";
     sorted.forEach((d, i) => {
       const gen = _loadGenLoaded(d);
       const tot = Object.values(gen).reduce((s, v) => s + (parseFloat(v) || 0), 0);
       const bg  = i % 2 === 1 ? "background:#edf2f7;" : "background:#f7fafc;";
-      totCols += `<td style="text-align:right;border-left:2px solid #e2e8f0;${bg}">${tot ? Math.round(tot).toLocaleString() : "—"}</td>`;
-      totCols += `<td style="${bg}"></td>`;
+      totCols += "<td style='text-align:right;border-left:2px solid #e2e8f0;" + bg + "'>" +
+        (tot ? Math.round(tot).toLocaleString() : "—") + "</td>";
+      totCols += "<td style='" + bg + "'></td>";
     });
     trT.innerHTML = totCols;
     tbody.appendChild(trT);
-    document.getElementById("gen-sch-results").classList.remove("hidden");
   }
 
   function loadScheduleToGenSch() {
