@@ -573,14 +573,14 @@
           </tr>
         </thead>
         <tbody>
-          <tr id="avail-row-G1"><td style="font-weight:700">G1</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G1',this.value)"></td></tr>
-          <tr id="avail-row-G2"><td style="font-weight:700">G2</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G2',this.value)"></td></tr>
-          <tr id="avail-row-G3"><td style="font-weight:700">G3</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G3',this.value)"></td></tr>
-          <tr id="avail-row-G4"><td style="font-weight:700">G4</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G4',this.value)"></td></tr>
-          <tr id="avail-row-G5"><td style="font-weight:700">G5</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G5',this.value)"></td></tr>
-          <tr id="avail-row-G6"><td style="font-weight:700">G6</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G6',this.value)"></td></tr>
-          <tr id="avail-row-G7"><td style="font-weight:700">G7</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G7',this.value)"></td></tr>
-          <tr id="avail-row-G8"><td style="font-weight:700">G8</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G8',this.value)"></td></tr>
+          <tr id="avail-row-G1"><td style="font-weight:700">G1</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G1',this.value)" onblur="_saveAvail()"></td></tr>
+          <tr id="avail-row-G2"><td style="font-weight:700">G2</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G2',this.value)" onblur="_saveAvail()"></td></tr>
+          <tr id="avail-row-G3"><td style="font-weight:700">G3</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G3',this.value)" onblur="_saveAvail()"></td></tr>
+          <tr id="avail-row-G4"><td style="font-weight:700">G4</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G4',this.value)" onblur="_saveAvail()"></td></tr>
+          <tr id="avail-row-G5"><td style="font-weight:700">G5</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G5',this.value)" onblur="_saveAvail()"></td></tr>
+          <tr id="avail-row-G6"><td style="font-weight:700">G6</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G6',this.value)" onblur="_saveAvail()"></td></tr>
+          <tr id="avail-row-G7"><td style="font-weight:700">G7</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G7',this.value)" onblur="_saveAvail()"></td></tr>
+          <tr id="avail-row-G8"><td style="font-weight:700">G8</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G8',this.value)" onblur="_saveAvail()"></td></tr>
         </tbody>
       </table>
     </div>
@@ -1370,10 +1370,7 @@
     "out-of-service":{ label: "OUT OF SERVICE",  bg: "#fed7d7", color: "#742a2a", rowBg: "#fff5f5" },
   };
 
-  function _loadAvail() {
-    try { return JSON.parse(localStorage.getItem("lehi_availability") || "{}"); } catch { return {}; }
-  }
-  function _saveAvail(d) { localStorage.setItem("lehi_availability", JSON.stringify(d)); }
+  let _availData = {};
 
   function _renderAvailBadge(gen, status) {
     const row = document.getElementById("avail-row-" + gen);
@@ -1393,27 +1390,37 @@
       "</div>";
   }
 
-  function loadAvailability() {
-    const data = _loadAvail();
+  async function loadAvailability() {
+    try {
+      const res = await fetch("/api/availability");
+      _availData = await res.json();
+    } catch(e) { _availData = {}; }
     _AVAIL_GENS.forEach(gen => {
-      const entry = data[gen] || { status: "available", notes: "" };
+      const entry = _availData[gen] || { status: "available", notes: "" };
       _renderAvailBadge(gen, entry.status);
       const row = document.getElementById("avail-row-" + gen);
       if (row) row.querySelector(".avail-notes-input").value = entry.notes || "";
     });
   }
 
+  async function _saveAvail() {
+    try {
+      await fetch("/api/availability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(_availData)
+      });
+    } catch(e) { console.error("Availability save failed:", e); }
+  }
+
   function setAvailStatus(gen, status) {
-    const data = _loadAvail();
-    data[gen] = Object.assign({ status: "available", notes: "" }, data[gen], { status });
-    _saveAvail(data);
+    _availData[gen] = Object.assign({ status: "available", notes: "" }, _availData[gen], { status });
     _renderAvailBadge(gen, status);
+    _saveAvail();
   }
 
   function onAvailNotes(gen, value) {
-    const data = _loadAvail();
-    data[gen] = Object.assign({ status: "available", notes: "" }, data[gen], { notes: value });
-    _saveAvail(data);
+    _availData[gen] = Object.assign({ status: "available", notes: "" }, _availData[gen], { notes: value });
   }
 
   // ── Gen Schedule (image upload) ───────────────────────────────────────

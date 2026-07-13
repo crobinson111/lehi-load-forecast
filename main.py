@@ -1794,4 +1794,22 @@ async def get_gen_image_meta():
     return meta
 
 
+@app.get("/api/availability")
+async def get_availability():
+    base = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(base, "data", "availability.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        return json.load(f)
+
+
+@app.post("/api/availability")
+async def save_availability(payload: dict):
+    base = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(base, "data", "availability.json"), "w") as f:
+        json.dump(payload, f)
+    return {"ok": True}
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
