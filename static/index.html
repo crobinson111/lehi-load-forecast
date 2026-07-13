@@ -533,8 +533,6 @@
   const todayStr = today.toISOString().slice(0, 10);
   const yesterdayStr = new Date(today - 86400000).toISOString().slice(0, 10);
   document.getElementById("date-input").value     = todayStr;
-  document.getElementById("acc-date-input").value = yesterdayStr;
-  document.getElementById("acc-date-input").max   = yesterdayStr;
   document.getElementById("solar-red-mesa-date").value  = todayStr;
   document.getElementById("solar-steele-a-date").value  = todayStr;
   document.getElementById("wind-horse-butte-date").value = todayStr;
@@ -1075,6 +1073,7 @@
     const genTotal = Object.values(_supplyGen).reduce((s, v) => s + (Number(v) || 0), 0);
     const el  = document.getElementById("supply-dths");
     const val = document.getElementById("supply-dths-val");
+    if (!el || !val) return;
     el.classList.remove("hidden");
     val.textContent = genTotal > 0
       ? (genTotal * 0.0093).toLocaleString(undefined, {maximumFractionDigits: 1})
