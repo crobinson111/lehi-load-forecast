@@ -562,12 +562,19 @@
   // ── Status ────────────────────────────────────────────────────────────
 
   async function checkStatus() {
+    const dot    = document.getElementById("status-dot");
+    const text   = document.getElementById("status-text");
+    const detail = document.getElementById("status-detail");
     try {
-      const res = await fetch("/api/status");
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 12000);
+      let res;
+      try {
+        res = await fetch("/api/status", { signal: controller.signal });
+      } finally {
+        clearTimeout(timeout);
+      }
       const s = await res.json();
-      const dot    = document.getElementById("status-dot");
-      const text   = document.getElementById("status-text");
-      const detail = document.getElementById("status-detail");
 
       if (s.training) {
         dot.className = "dot yellow";
@@ -584,8 +591,11 @@
         text.textContent = "Model unavailable";
         detail.textContent = s.error ?? "";
       }
-    } catch {
-      document.getElementById("status-text").textContent = "Could not reach server";
+    } catch (e) {
+      dot.className = "dot yellow";
+      text.textContent = e?.name === "AbortError" ? "Server starting up…" : "Could not reach server";
+      detail.textContent = "Retrying…";
+      setTimeout(checkStatus, 5000);
     }
   }
 
