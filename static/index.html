@@ -507,12 +507,7 @@
     <div id="gen-sch-results" style="display:none">
       <div class="chart-wrap">
         <div class="chart-title" id="gen-sch-title">Generation Schedule</div>
-        <div style="overflow-x:auto">
-          <table class="data-table" id="gen-sch-table" style="min-width:240px">
-            <thead id="gen-sch-thead"></thead>
-            <tbody id="gen-sch-tbody"></tbody>
-          </table>
-        </div>
+        <div id="gen-sch-table-wrap" style="overflow-x:auto"></div>
       </div>
     </div>
   </div>
@@ -1343,10 +1338,11 @@
   }
 
   function loadGenSch() {
-    const dates  = _getLoadedDates();
-    const msgEl  = document.getElementById("gen-sch-msg");
-    const resEl  = document.getElementById("gen-sch-results");
+    const dates = _getLoadedDates();
+    const msgEl = document.getElementById("gen-sch-msg");
+    const resEl = document.getElementById("gen-sch-results");
     _renderGenSchChips(dates);
+
     if (dates.length === 0) {
       if (msgEl) msgEl.style.display = "";
       if (resEl) resEl.style.display = "none";
@@ -1356,49 +1352,76 @@
     if (resEl) resEl.style.display = "";
 
     const sorted = [...dates].sort();
-    document.getElementById("gen-sch-title").textContent =
-      "Generation Schedule — " + sorted.map(_genSchFmtDate).join(", ");
+    const titleEl = document.getElementById("gen-sch-title");
+    if (titleEl) titleEl.textContent = "Generation Schedule — " + sorted.map(_genSchFmtDate).join(", ");
 
-    const table = document.getElementById("gen-sch-table");
-    if (!table) return;
+    const wrap = document.getElementById("gen-sch-table-wrap");
+    if (!wrap) return;
 
-    const dayBg = i => i % 2 === 1 ? "#edf2f7" : "";
+    function mkTh(text, style, extra) {
+      const el = document.createElement("th");
+      if (extra && extra.html) el.innerHTML = text; else el.textContent = text;
+      if (style) el.style.cssText = style;
+      if (extra && extra.rowSpan) el.rowSpan = extra.rowSpan;
+      if (extra && extra.colSpan) el.colSpan = extra.colSpan;
+      return el;
+    }
 
-    let tHead = "<thead><tr><th rowspan='2' style='vertical-align:middle'>Hour</th><th rowspan='2' style='vertical-align:middle'>HE</th>";
-    let tHead2 = "<tr>";
+    const tbl = document.createElement("table");
+    tbl.className = "data-table";
+    tbl.style.minWidth = "240px";
+
+    const thead = tbl.createTHead();
+    const r1    = thead.insertRow();
+    const r2    = thead.insertRow();
+
+    r1.appendChild(mkTh("Hour", "vertical-align:middle", { rowSpan: 2 }));
+    r1.appendChild(mkTh("HE",   "vertical-align:middle", { rowSpan: 2 }));
     sorted.forEach((d, i) => {
-      const bg = dayBg(i) ? " background:" + dayBg(i) : "";
-      tHead += "<th colspan='2' style='text-align:center;border-left:2px solid #e2e8f0;" + bg + "'>" +
-        _genSchFmtDate(d) + "<br><span style='font-weight:400;font-size:.7rem'>" + d + "</span></th>";
-      tHead2 += "<th style='border-left:2px solid #e2e8f0;" + bg + "'>kWh</th>" +
-        "<th style='color:#718096;font-weight:500;" + bg + "'>Engines</th>";
+      const bg = i % 2 === 1 ? "background:#edf2f7;" : "";
+      r1.appendChild(mkTh(
+        _genSchFmtDate(d) + "<br><span style='font-weight:400;font-size:.7rem'>" + d + "</span>",
+        "text-align:center;border-left:2px solid #e2e8f0;" + bg,
+        { colSpan: 2, html: true }
+      ));
+      r2.appendChild(mkTh("kWh",     "border-left:2px solid #e2e8f0;" + bg));
+      r2.appendChild(mkTh("Engines", "color:#718096;font-weight:500;" + bg));
     });
-    tHead += "</tr>" + tHead2 + "</tr></thead>";
 
-    let tBody = "<tbody>";
+    const tbody = tbl.createTBody();
     for (let hr = 0; hr < 24; hr++) {
-      tBody += "<tr><td>" + fmt12(hr) + "</td><td>" + (hr + 1) + "</td>";
+      const tr = tbody.insertRow();
+      tr.insertCell().textContent = fmt12(hr);
+      tr.insertCell().textContent = hr + 1;
       sorted.forEach((d, i) => {
         const gen = _loadGenLoaded(d);
         const val = gen[hr] || 0;
-        const eng = val ? (_engineLabel(val) || "") : "";
         const bg  = i % 2 === 1 ? "background:#f7fafc;" : "";
-        tBody += "<td style='text-align:right;border-left:2px solid #e2e8f0;" + bg + "'>" +
-          (val ? Math.round(val).toLocaleString() : "—") + "</td>" +
-          "<td style='color:#4a5568;font-size:.82rem;" + bg + "'>" + eng + "</td>";
+        const cV  = tr.insertCell();
+        cV.style.cssText = "text-align:right;border-left:2px solid #e2e8f0;" + bg;
+        cV.textContent   = val ? Math.round(val).toLocaleString() : "—";
+        const cE  = tr.insertCell();
+        cE.style.cssText = "color:#4a5568;font-size:.82rem;" + bg;
+        cE.textContent   = val ? (_engineLabel(val) || "") : "";
       });
-      tBody += "</tr>";
     }
-    tBody += "<tr style='font-weight:700;background:#f7fafc'><td>Daily Total</td><td></td>";
+
+    const trT = tbody.insertRow();
+    trT.style.cssText = "font-weight:700;background:#f7fafc";
+    trT.insertCell().textContent = "Daily Total";
+    trT.insertCell();
     sorted.forEach((d, i) => {
       const gen = _loadGenLoaded(d);
       const tot = Object.values(gen).reduce((s, v) => s + (parseFloat(v) || 0), 0);
       const bg  = i % 2 === 1 ? "background:#edf2f7;" : "background:#f7fafc;";
-      tBody += "<td style='text-align:right;border-left:2px solid #e2e8f0;" + bg + "'>" +
-        (tot ? Math.round(tot).toLocaleString() : "—") + "</td><td style='" + bg + "'></td>";
+      const cT  = trT.insertCell();
+      cT.style.cssText = "text-align:right;border-left:2px solid #e2e8f0;" + bg;
+      cT.textContent   = tot ? Math.round(tot).toLocaleString() : "—";
+      trT.insertCell().style.cssText = bg;
     });
-    tBody += "</tr></tbody>";
-    table.innerHTML = tHead + tBody;
+
+    wrap.innerHTML = "";
+    wrap.appendChild(tbl);
   }
 
   function loadScheduleToGenSch() {
