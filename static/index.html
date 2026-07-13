@@ -1346,15 +1346,25 @@
     const dates  = _getLoadedDates();
     const msgEl  = document.getElementById("gen-sch-msg");
     _renderGenSchChips(dates);
+
+    // TEMP DEBUG — remove after diagnosis
+    const _dbg = document.createElement("div");
+    _dbg.style.cssText = "color:red;font-weight:700;font-size:11px;padding:2px 6px";
+    _dbg.textContent = "dbg: dates.length=" + dates.length;
+    document.getElementById("gen-sch-chips").appendChild(_dbg);
+
     if (dates.length === 0) {
-      msgEl.classList.remove("hidden");
+      _dbg.textContent += " → early-return";
+      if (msgEl) msgEl.classList.remove("hidden");
       document.getElementById("gen-sch-results").classList.add("hidden");
       return;
     }
-    msgEl.classList.add("hidden");
+    _dbg.textContent += " → showing results";
+    if (msgEl) msgEl.classList.add("hidden");
 
     // Show results div first so something appears even if table building fails
     document.getElementById("gen-sch-results").classList.remove("hidden");
+    _dbg.textContent += " → done";
 
     try {
       const sorted = [...dates].sort();
