@@ -1359,49 +1359,46 @@
     document.getElementById("gen-sch-title").textContent =
       "Generation Schedule — " + sorted.map(_genSchFmtDate).join(", ");
 
-    const thead = document.getElementById("gen-sch-thead");
-    const tbody = document.getElementById("gen-sch-tbody");
-    if (!thead || !tbody) return;
+    const table = document.getElementById("gen-sch-table");
+    if (!table) return;
 
     const dayBg = i => i % 2 === 1 ? "#edf2f7" : "";
 
-    let hdr1 = "<tr><th rowspan='2' style='vertical-align:middle'>Hour</th><th rowspan='2' style='vertical-align:middle'>HE</th>";
-    let hdr2 = "<tr>";
+    let tHead = "<thead><tr><th rowspan='2' style='vertical-align:middle'>Hour</th><th rowspan='2' style='vertical-align:middle'>HE</th>";
+    let tHead2 = "<tr>";
     sorted.forEach((d, i) => {
       const bg = dayBg(i) ? " background:" + dayBg(i) : "";
-      hdr1 += "<th colspan='2' style='text-align:center;border-left:2px solid #e2e8f0;" + bg + "'>" +
+      tHead += "<th colspan='2' style='text-align:center;border-left:2px solid #e2e8f0;" + bg + "'>" +
         _genSchFmtDate(d) + "<br><span style='font-weight:400;font-size:.7rem'>" + d + "</span></th>";
-      hdr2 += "<th style='border-left:2px solid #e2e8f0;" + bg + "'>kWh</th>" +
+      tHead2 += "<th style='border-left:2px solid #e2e8f0;" + bg + "'>kWh</th>" +
         "<th style='color:#718096;font-weight:500;" + bg + "'>Engines</th>";
     });
-    hdr1 += "</tr>";
-    hdr2 += "</tr>";
-    thead.innerHTML = hdr1 + hdr2;
+    tHead += "</tr>" + tHead2 + "</tr></thead>";
 
-    let html = "";
+    let tBody = "<tbody>";
     for (let hr = 0; hr < 24; hr++) {
-      html += "<tr><td>" + fmt12(hr) + "</td><td>" + (hr + 1) + "</td>";
+      tBody += "<tr><td>" + fmt12(hr) + "</td><td>" + (hr + 1) + "</td>";
       sorted.forEach((d, i) => {
         const gen = _loadGenLoaded(d);
         const val = gen[hr] || 0;
         const eng = val ? (_engineLabel(val) || "") : "";
         const bg  = i % 2 === 1 ? "background:#f7fafc;" : "";
-        html += "<td style='text-align:right;border-left:2px solid #e2e8f0;" + bg + "'>" +
+        tBody += "<td style='text-align:right;border-left:2px solid #e2e8f0;" + bg + "'>" +
           (val ? Math.round(val).toLocaleString() : "—") + "</td>" +
           "<td style='color:#4a5568;font-size:.82rem;" + bg + "'>" + eng + "</td>";
       });
-      html += "</tr>";
+      tBody += "</tr>";
     }
-    html += "<tr style='font-weight:700;background:#f7fafc'><td>Daily Total</td><td></td>";
+    tBody += "<tr style='font-weight:700;background:#f7fafc'><td>Daily Total</td><td></td>";
     sorted.forEach((d, i) => {
       const gen = _loadGenLoaded(d);
       const tot = Object.values(gen).reduce((s, v) => s + (parseFloat(v) || 0), 0);
       const bg  = i % 2 === 1 ? "background:#edf2f7;" : "background:#f7fafc;";
-      html += "<td style='text-align:right;border-left:2px solid #e2e8f0;" + bg + "'>" +
+      tBody += "<td style='text-align:right;border-left:2px solid #e2e8f0;" + bg + "'>" +
         (tot ? Math.round(tot).toLocaleString() : "—") + "</td><td style='" + bg + "'></td>";
     });
-    html += "</tr>";
-    tbody.innerHTML = html;
+    tBody += "</tr></tbody>";
+    table.innerHTML = tHead + tBody;
   }
 
   function loadScheduleToGenSch() {
