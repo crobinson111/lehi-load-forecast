@@ -527,11 +527,13 @@
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
   const yesterdayStr = new Date(today - 86400000).toISOString().slice(0, 10);
-  document.getElementById("date-input").value     = todayStr;
-  document.getElementById("solar-red-mesa-date").value  = todayStr;
-  document.getElementById("solar-steele-a-date").value  = todayStr;
-  document.getElementById("wind-horse-butte-date").value = todayStr;
-  document.getElementById("supply-date").value           = todayStr;
+  try {
+    document.getElementById("date-input").value             = todayStr;
+    document.getElementById("solar-red-mesa-date").value    = todayStr;
+    document.getElementById("solar-steele-a-date").value    = todayStr;
+    document.getElementById("wind-horse-butte-date").value  = todayStr;
+    document.getElementById("supply-date").value            = todayStr;
+  } catch(e) { console.error("Init date error:", e); }
 
   // ── Tabs ──────────────────────────────────────────────────────────────
 
@@ -1349,7 +1351,7 @@
       return;
     }
     if (msgEl) msgEl.style.display = "none";
-    if (resEl) resEl.style.display = "";
+    if (resEl) resEl.style.display = "block";
 
     const sorted = [...dates].sort();
     const titleEl = document.getElementById("gen-sch-title");
