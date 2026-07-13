@@ -1762,4 +1762,36 @@ async def dam_lmp_api(
     return {"date": target_date, "node": CAISO_NODE, "hourly": result}
 
 
+@app.post("/api/gen-image")
+async def save_gen_image(payload: dict):
+    import base64 as _b64
+    image_data = payload.get("image", "")
+    name = (payload.get("name") or "Unknown").strip()[:80]
+    if not image_data:
+        raise HTTPException(status_code=400, detail="No image provided")
+    _, _, b64 = image_data.partition(",")
+    img_bytes = _b64.b64decode(b64)
+    base = os.path.dirname(os.path.abspath(__file__))
+    with open(os.path.join(base, "static", "gen_schedule_upload.png"), "wb") as f:
+        f.write(img_bytes)
+    tz = ZoneInfo("America/Denver")
+    now = datetime.now(tz)
+    meta = {"name": name, "timestamp": now.isoformat()}
+    with open(os.path.join(base, "data", "gen_schedule_meta.json"), "w") as f:
+        json.dump(meta, f)
+    return {"ok": True}
+
+
+@app.get("/api/gen-image-meta")
+async def get_gen_image_meta():
+    base = os.path.dirname(os.path.abspath(__file__))
+    path = os.path.join(base, "data", "gen_schedule_meta.json")
+    if not os.path.exists(path):
+        return {"has_image": False}
+    with open(path) as f:
+        meta = json.load(f)
+    meta["has_image"] = True
+    return meta
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

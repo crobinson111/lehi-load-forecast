@@ -494,22 +494,38 @@
 
   <!-- ══════════════════════ TAB 7: GEN SCHEDULE ══════════════════════ -->
   <div id="tab-gen-sch" class="hidden">
-    <div class="controls">
-      <div class="field">
-        <label for="gen-sch-date-input">Add Date</label>
-        <input type="date" id="gen-sch-date-input" />
+
+    <!-- Upload panel -->
+    <div id="gen-sch-upload-panel" class="chart-wrap" style="margin-bottom:1.25rem">
+      <div style="font-size:.75rem;font-weight:700;color:#718096;letter-spacing:.06em;text-transform:uppercase;margin-bottom:.9rem">Upload Schedule Screenshot</div>
+      <div id="gen-sch-drop-zone" onclick="document.getElementById('gen-sch-file-input').click()"
+           style="border:2px dashed #cbd5e0;border-radius:8px;padding:2rem;text-align:center;cursor:pointer;color:#718096;font-size:.875rem;transition:border-color .15s">
+        Click here, then paste (Ctrl+V) — or drag &amp; drop an image
+        <input type="file" id="gen-sch-file-input" accept="image/*" style="display:none" onchange="onGenSchFileChange(event)">
       </div>
-      <button class="btn-primary" onclick="addGenSchDate(document.getElementById('gen-sch-date-input').value)">Add Date</button>
-      <button class="btn-secondary" onclick="loadGenSch()">↻ Refresh</button>
+      <img id="gen-sch-preview" style="display:none;max-width:100%;border-radius:6px;margin-top:.9rem;border:1px solid #e2e8f0">
+      <div style="display:flex;gap:.5rem;margin-top:.9rem;align-items:center;flex-wrap:wrap">
+        <input type="text" id="gen-sch-name" placeholder="Your name" maxlength="60"
+               style="padding:.4rem .65rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;flex:1;min-width:140px">
+        <button id="gen-sch-submit-btn" class="btn-primary" onclick="submitGenImage()" disabled style="opacity:.5">Submit</button>
+        <button class="btn-secondary" onclick="cancelGenImage()">Cancel</button>
+      </div>
     </div>
-    <div id="gen-sch-chips" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.25rem;min-height:1rem"></div>
-    <div id="gen-sch-msg" class="message info hidden">No schedules loaded yet. Use "Load Schedule" on the Supply Portfolio tab.</div>
-    <div id="gen-sch-results" style="display:none">
+
+    <!-- Current schedule display -->
+    <div id="gen-sch-display" style="display:none">
       <div class="chart-wrap">
-        <div class="chart-title" id="gen-sch-title">Generation Schedule</div>
-        <div id="gen-sch-table-wrap" style="overflow-x:auto"></div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:.75rem;flex-wrap:wrap;gap:.5rem">
+          <span id="gen-sch-attribution" style="font-size:.8rem;color:#718096"></span>
+          <button class="btn-secondary" onclick="showGenSchUpload()" style="font-size:.8rem;padding:.3rem .65rem">↑ Update Schedule</button>
+        </div>
+        <div style="overflow-x:auto">
+          <img id="gen-sch-img" style="max-width:100%;border-radius:4px">
+        </div>
       </div>
     </div>
+
+    <div id="gen-sch-empty" class="message info" style="display:none">No schedule uploaded yet. Paste a screenshot above to get started.</div>
   </div>
 
 </main>
@@ -542,7 +558,7 @@
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
-    if (name === "gen-sch") loadGenSch();
+    if (name === "gen-sch") loadGenSchDisplay();
   }
 
   // ── Utilities ─────────────────────────────────────────────────────────
@@ -1286,162 +1302,88 @@
 
   // ── Tab 7: Gen Schedule ───────────────────────────────────────────────
 
-  function _getLoadedDates() {
-    try { return JSON.parse(localStorage.getItem("lehi_gen_sch_dates") || "[]"); }
-    catch { return []; }
-  }
-  function _saveLoadedDates(dates) {
-    localStorage.setItem("lehi_gen_sch_dates", JSON.stringify(dates));
-  }
-  function _loadGenLoaded(dateStr) {
-    try { return JSON.parse(localStorage.getItem("lehi_gen_loaded_" + dateStr) || "{}"); }
-    catch { return {}; }
-  }
-  function _saveGenLoaded(dateStr, vals) {
-    localStorage.setItem("lehi_gen_loaded_" + dateStr, JSON.stringify(vals));
-  }
+  // ── Gen Schedule (image upload) ───────────────────────────────────────
 
-  const _ENGINE_MAP = {4000: "2 small", 6000: "3 small", 18000: "all except 1 sm", 18900: "all except 1 sm", 21200: "all"};
-  function _engineLabel(kwh) { return _ENGINE_MAP[Math.round(kwh)] || ""; }
+  let _genSchPendingImage = null;
 
-  function _genSchFmtDate(d) {
-    const dt = new Date(d + "T12:00:00");
-    return dt.toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+  function _genSchSetPending(dataUrl) {
+    _genSchPendingImage = dataUrl;
+    const preview = document.getElementById("gen-sch-preview");
+    preview.src = dataUrl;
+    preview.style.display = "block";
+    const btn = document.getElementById("gen-sch-submit-btn");
+    btn.disabled = false;
+    btn.style.opacity = "1";
   }
 
-  function _renderGenSchChips(dates) {
-    const el = document.getElementById("gen-sch-chips");
-    el.innerHTML = "";
-    dates.forEach(d => {
-      const chip = document.createElement("span");
-      chip.className = "date-chip";
-      chip.innerHTML =
-        `${_genSchFmtDate(d)} <button class="chip-rm" onclick="removeGenSchDate('${d}')" title="Remove">×</button>`;
-      el.appendChild(chip);
-    });
+  function onGenSchFileChange(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => _genSchSetPending(ev.target.result);
+    reader.readAsDataURL(file);
   }
 
-  function addGenSchDate(dateStr) {
-    if (!dateStr) return;
-    const dates = _getLoadedDates();
-    if (!dates.includes(dateStr)) {
-      dates.push(dateStr);
-      dates.sort();
-      _saveLoadedDates(dates);
-    }
-    document.getElementById("gen-sch-date-input").value = "";
-    loadGenSch();
-  }
-
-  function removeGenSchDate(dateStr) {
-    const dates = _getLoadedDates().filter(d => d !== dateStr);
-    _saveLoadedDates(dates);
-    loadGenSch();
-  }
-
-  function loadGenSch() {
-    const dates = _getLoadedDates();
-    const msgEl = document.getElementById("gen-sch-msg");
-    const resEl = document.getElementById("gen-sch-results");
-    _renderGenSchChips(dates);
-
-    if (dates.length === 0) {
-      if (msgEl) msgEl.style.display = "";
-      if (resEl) resEl.style.display = "none";
-      return;
-    }
-    if (msgEl) msgEl.style.display = "none";
-    if (resEl) resEl.style.display = "block";
-
-    const sorted = [...dates].sort();
-    const titleEl = document.getElementById("gen-sch-title");
-    if (titleEl) titleEl.textContent = "Generation Schedule — " + sorted.map(_genSchFmtDate).join(", ");
-
-    const wrap = document.getElementById("gen-sch-table-wrap");
-    if (!wrap) return;
-
-    function mkTh(text, style, extra) {
-      const el = document.createElement("th");
-      if (extra && extra.html) el.innerHTML = text; else el.textContent = text;
-      if (style) el.style.cssText = style;
-      if (extra && extra.rowSpan) el.rowSpan = extra.rowSpan;
-      if (extra && extra.colSpan) el.colSpan = extra.colSpan;
-      return el;
-    }
-
-    const tbl = document.createElement("table");
-    tbl.className = "data-table";
-    tbl.style.minWidth = "240px";
-
-    const thead = tbl.createTHead();
-    const r1    = thead.insertRow();
-    const r2    = thead.insertRow();
-
-    r1.appendChild(mkTh("Hour", "vertical-align:middle", { rowSpan: 2 }));
-    r1.appendChild(mkTh("HE",   "vertical-align:middle", { rowSpan: 2 }));
-    sorted.forEach((d, i) => {
-      const bg = i % 2 === 1 ? "background:#edf2f7;" : "";
-      r1.appendChild(mkTh(
-        _genSchFmtDate(d) + "<br><span style='font-weight:400;font-size:.7rem'>" + d + "</span>",
-        "text-align:center;border-left:2px solid #e2e8f0;" + bg,
-        { colSpan: 2, html: true }
-      ));
-      r2.appendChild(mkTh("kWh",     "border-left:2px solid #e2e8f0;" + bg));
-      r2.appendChild(mkTh("Engines", "color:#718096;font-weight:500;" + bg));
-    });
-
-    const tbody = tbl.createTBody();
-    for (let hr = 0; hr < 24; hr++) {
-      const tr = tbody.insertRow();
-      tr.insertCell().textContent = fmt12(hr);
-      tr.insertCell().textContent = hr + 1;
-      sorted.forEach((d, i) => {
-        const gen = _loadGenLoaded(d);
-        const val = gen[hr] || 0;
-        const bg  = i % 2 === 1 ? "background:#f7fafc;" : "";
-        const cV  = tr.insertCell();
-        cV.style.cssText = "text-align:right;border-left:2px solid #e2e8f0;" + bg;
-        cV.textContent   = val ? Math.round(val).toLocaleString() : "—";
-        const cE  = tr.insertCell();
-        cE.style.cssText = "color:#4a5568;font-size:.82rem;" + bg;
-        cE.textContent   = val ? (_engineLabel(val) || "") : "";
-      });
-    }
-
-    const trT = tbody.insertRow();
-    trT.style.cssText = "font-weight:700;background:#f7fafc";
-    trT.insertCell().textContent = "Daily Total";
-    trT.insertCell();
-    sorted.forEach((d, i) => {
-      const gen = _loadGenLoaded(d);
-      const tot = Object.values(gen).reduce((s, v) => s + (parseFloat(v) || 0), 0);
-      const bg  = i % 2 === 1 ? "background:#edf2f7;" : "background:#f7fafc;";
-      const cT  = trT.insertCell();
-      cT.style.cssText = "text-align:right;border-left:2px solid #e2e8f0;" + bg;
-      cT.textContent   = tot ? Math.round(tot).toLocaleString() : "—";
-      trT.insertCell().style.cssText = bg;
-    });
-
-    wrap.innerHTML = "";
-    wrap.appendChild(tbl);
-  }
-
-  function loadScheduleToGenSch() {
-    if (!_supplyData) return;
-    _saveGenLoaded(_supplyData.date, _supplyGen);
-    const dates = _getLoadedDates();
-    if (!dates.includes(_supplyData.date)) {
-      dates.push(_supplyData.date);
-      dates.sort();
-      _saveLoadedDates(dates);
-    } else {
-      _saveLoadedDates(dates);
-    }
-    const btn = document.getElementById("supply-load-sch-btn");
-    const orig = btn.textContent;
-    btn.textContent = "Loaded!";
+  function cancelGenImage() {
+    _genSchPendingImage = null;
+    document.getElementById("gen-sch-preview").style.display = "none";
+    document.getElementById("gen-sch-preview").src = "";
+    document.getElementById("gen-sch-name").value = "";
+    const btn = document.getElementById("gen-sch-submit-btn");
     btn.disabled = true;
-    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 1500);
+    btn.style.opacity = ".5";
+    document.getElementById("gen-sch-file-input").value = "";
+  }
+
+  async function submitGenImage() {
+    const name = document.getElementById("gen-sch-name").value.trim();
+    if (!name) { document.getElementById("gen-sch-name").focus(); return; }
+    if (!_genSchPendingImage) return;
+    const btn = document.getElementById("gen-sch-submit-btn");
+    btn.textContent = "Saving…";
+    btn.disabled = true;
+    try {
+      const res = await fetch("/api/gen-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: _genSchPendingImage, name })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        cancelGenImage();
+        await loadGenSchDisplay();
+      }
+    } catch(e) { console.error(e); }
+    btn.textContent = "Submit";
+    btn.disabled = false;
+    btn.style.opacity = "1";
+  }
+
+  function showGenSchUpload() {
+    document.getElementById("gen-sch-upload-panel").style.display = "block";
+  }
+
+  async function loadGenSchDisplay() {
+    try {
+      const res = await fetch("/api/gen-image-meta");
+      const meta = await res.json();
+      if (meta.has_image) {
+        const d = new Date(meta.timestamp);
+        const label = "Uploaded by " + meta.name + " · " +
+          d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) +
+          " at " + d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+        document.getElementById("gen-sch-attribution").textContent = label;
+        document.getElementById("gen-sch-img").src = "/gen_schedule_upload.png?t=" + d.getTime();
+        document.getElementById("gen-sch-display").style.display = "block";
+        document.getElementById("gen-sch-empty").style.display = "none";
+        document.getElementById("gen-sch-upload-panel").style.display = "none";
+      } else {
+        document.getElementById("gen-sch-display").style.display = "none";
+        document.getElementById("gen-sch-empty").style.display = "block";
+      }
+    } catch(e) {
+      document.getElementById("gen-sch-empty").style.display = "block";
+    }
   }
 
   // ── GEN fill-down drag ────────────────────────────────────────────────
@@ -1488,6 +1430,27 @@
     document.querySelector(".fill-dragging")?.classList.remove("fill-dragging");
     document.body.classList.remove("filling");
     _fillDrag = null;
+  });
+
+  // ── Paste screenshot into Gen Sch tab ────────────────────────────────
+  document.addEventListener("paste", e => {
+    const tab = document.getElementById("tab-gen-sch");
+    if (!tab || tab.classList.contains("hidden")) return;
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        const reader = new FileReader();
+        reader.onload = ev => {
+          _genSchSetPending(ev.target.result);
+          document.getElementById("gen-sch-upload-panel").style.display = "block";
+        };
+        reader.readAsDataURL(file);
+        e.preventDefault();
+        break;
+      }
+    }
   });
 
   // ── Init ──────────────────────────────────────────────────────────────
