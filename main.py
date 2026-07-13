@@ -995,12 +995,22 @@ async def train_model() -> None:
         X = np.vstack(train_df.apply(lambda r: build_features(r["hr"], r["temp_f"], r["apparent_f"], r["date"])[0], axis=1).values)
         y = train_df["load"].values
 
-        # Exponential decay: recent observations have more influence.
-        # Half-life of 90 days means last week weighs ~2x a day from 3 months ago
-        # and ~30x a day from 2 years ago.
+        # Exponential decay with 14-day half-life so the model is anchored to
+        # recent actuals rather than a 2-year average.
         max_date = pd.to_datetime(train_df["date"].max())
         days_ago = (max_date - pd.to_datetime(train_df["date"])).dt.days.values
-        sample_weights = np.exp(-days_ago / 90.0)
+        time_weights = np.exp(-days_ago / 14.0)
+
+        # Same-day-type multiplier: weekday rows get 5× weight when the most
+        # recent training day is a weekday (and vice versa for weekends).
+        # This anchors weekday forecasts to recent weekday actuals.
+        max_dow = max_date.dayofweek  # 0=Mon … 6=Sun
+        max_is_weekday = max_dow < 5
+        train_dow = pd.to_datetime(train_df["date"]).dt.dayofweek.values
+        same_type = (train_dow < 5) == max_is_weekday
+        day_type_mult = np.where(same_type, 5.0, 1.0)
+
+        sample_weights = time_weights * day_type_mult
 
         mdl = Pipeline([("scaler", StandardScaler()), ("ridge", Ridge(alpha=10.0))])
         mdl.fit(X, y, ridge__sample_weight=sample_weights)
