@@ -57,6 +57,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+
+# Persistent storage directory — set PERSIST_DIR env var to the Render disk mount path
+_BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
+PERSIST_DIR  = os.environ.get("PERSIST_DIR", os.path.join(_BASE_DIR, "data"))
+os.makedirs(PERSIST_DIR, exist_ok=True)
 CAISO_NODE = "ELAP_PACE-APND"
 
 LEHI_LAT          = 40.3916
@@ -1762,6 +1767,14 @@ async def dam_lmp_api(
     return {"date": target_date, "node": CAISO_NODE, "hourly": result}
 
 
+@app.get("/gen_schedule_upload.png")
+async def serve_gen_image():
+    path = os.path.join(PERSIST_DIR, "gen_schedule_upload.png")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="No image uploaded yet")
+    return FileResponse(path, media_type="image/png")
+
+
 @app.post("/api/gen-image")
 async def save_gen_image(payload: dict):
     import base64 as _b64
@@ -1771,21 +1784,19 @@ async def save_gen_image(payload: dict):
         raise HTTPException(status_code=400, detail="No image provided")
     _, _, b64 = image_data.partition(",")
     img_bytes = _b64.b64decode(b64)
-    base = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(base, "static", "gen_schedule_upload.png"), "wb") as f:
+    with open(os.path.join(PERSIST_DIR, "gen_schedule_upload.png"), "wb") as f:
         f.write(img_bytes)
     tz = ZoneInfo("America/Denver")
     now = datetime.now(tz)
     meta = {"name": name, "timestamp": now.isoformat()}
-    with open(os.path.join(base, "data", "gen_schedule_meta.json"), "w") as f:
+    with open(os.path.join(PERSIST_DIR, "gen_schedule_meta.json"), "w") as f:
         json.dump(meta, f)
     return {"ok": True}
 
 
 @app.get("/api/gen-image-meta")
 async def get_gen_image_meta():
-    base = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(base, "data", "gen_schedule_meta.json")
+    path = os.path.join(PERSIST_DIR, "gen_schedule_meta.json")
     if not os.path.exists(path):
         return {"has_image": False}
     with open(path) as f:
@@ -1796,8 +1807,7 @@ async def get_gen_image_meta():
 
 @app.get("/api/availability")
 async def get_availability():
-    base = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(base, "data", "availability.json")
+    path = os.path.join(PERSIST_DIR, "availability.json")
     if not os.path.exists(path):
         return {}
     with open(path) as f:
@@ -1806,8 +1816,7 @@ async def get_availability():
 
 @app.post("/api/availability")
 async def save_availability(payload: dict):
-    base = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(base, "data", "availability.json"), "w") as f:
+    with open(os.path.join(PERSIST_DIR, "availability.json"), "w") as f:
         json.dump(payload, f)
     return {"ok": True}
 
