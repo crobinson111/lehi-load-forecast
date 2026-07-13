@@ -1,4 +1,4 @@
-# push-data.ps1 — export Excel data + training weather to CSV and push to GitHub
+# push-data.ps1 - export Excel data + training weather to CSV and push to GitHub
 
 # Read EXCEL_PATH from .env
 $envFile = Join-Path $PSScriptRoot ".env"
@@ -50,13 +50,13 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "All data exported successfully."
 
-# Fetch UAMPS schedule (CRSP, Provo River, Veyo) — 30 days back + 16 days forward
+# Fetch UAMPS schedule (CRSP, Provo River, Veyo) - 30 days back + 16 days forward
 $uampsScript = Join-Path $PSScriptRoot "fetch_uamps.py"
 $uampsOut    = Join-Path $dataDir "uamps_schedule.csv"
 Write-Host "Fetching UAMPS scheduler data..."
 python $uampsScript $uampsOut 30 16
 if ($LASTEXITCODE -ne 0) {
-    Write-Warning "UAMPS fetch failed — continuing without it."
+    Write-Warning "UAMPS fetch failed - continuing without it."
 }
 
 # Git operations
@@ -68,13 +68,16 @@ try {
             data/supply_history.csv data/h_butte_weather.csv data/uamps_schedule.csv
     if ($LASTEXITCODE -ne 0) { throw "git add failed." }
 
-    git commit -m "Update load, solar, weather, and UAMPS schedule data $today"
-    if ($LASTEXITCODE -ne 0) { throw "git commit failed." }
-
-    git push
-    if ($LASTEXITCODE -ne 0) { throw "git push failed." }
-
-    Write-Host "Successfully pushed data update for $today."
+    git diff --staged --quiet
+    if ($LASTEXITCODE -ne 0) {
+        git commit -m "Update load, solar, weather, and UAMPS schedule data $today"
+        if ($LASTEXITCODE -ne 0) { throw "git commit failed." }
+        git push
+        if ($LASTEXITCODE -ne 0) { throw "git push failed." }
+        Write-Host "Successfully pushed data update for $today."
+    } else {
+        Write-Host "No changes to push — data already up to date."
+    }
 } catch {
     Write-Error $_.Exception.Message
     exit 1
