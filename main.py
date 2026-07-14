@@ -1842,9 +1842,12 @@ async def get_availability():
 
 @app.post("/api/availability")
 async def save_availability(payload: dict):
+    name = (payload.pop("_name", None) or "Unknown").strip()[:80]
+    now = datetime.now(ZoneInfo("America/Denver"))
+    payload["_meta"] = {"name": name, "timestamp": now.isoformat()}
     with open(os.path.join(PERSIST_DIR, "availability.json"), "w") as f:
         json.dump(payload, f)
-    return {"ok": True}
+    return {"ok": True, "timestamp": now.isoformat(), "name": name}
 
 
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

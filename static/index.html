@@ -574,16 +574,23 @@
           </tr>
         </thead>
         <tbody>
-          <tr id="avail-row-G1"><td style="font-weight:700">G1</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G1',this.value)" onblur="_saveAvail()"></td></tr>
-          <tr id="avail-row-G2"><td style="font-weight:700">G2</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G2',this.value)" onblur="_saveAvail()"></td></tr>
-          <tr id="avail-row-G3"><td style="font-weight:700">G3</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G3',this.value)" onblur="_saveAvail()"></td></tr>
-          <tr id="avail-row-G4"><td style="font-weight:700">G4</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G4',this.value)" onblur="_saveAvail()"></td></tr>
-          <tr id="avail-row-G5"><td style="font-weight:700">G5</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G5',this.value)" onblur="_saveAvail()"></td></tr>
-          <tr id="avail-row-G6"><td style="font-weight:700">G6</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G6',this.value)" onblur="_saveAvail()"></td></tr>
-          <tr id="avail-row-G7"><td style="font-weight:700">G7</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G7',this.value)" onblur="_saveAvail()"></td></tr>
-          <tr id="avail-row-G8"><td style="font-weight:700">G8</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G8',this.value)" onblur="_saveAvail()"></td></tr>
+          <tr id="avail-row-G1"><td style="font-weight:700">G1</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G1',this.value)"></td></tr>
+          <tr id="avail-row-G2"><td style="font-weight:700">G2</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G2',this.value)"></td></tr>
+          <tr id="avail-row-G3"><td style="font-weight:700">G3</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G3',this.value)"></td></tr>
+          <tr id="avail-row-G4"><td style="font-weight:700">G4</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G4',this.value)"></td></tr>
+          <tr id="avail-row-G5"><td style="font-weight:700">G5</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G5',this.value)"></td></tr>
+          <tr id="avail-row-G6"><td style="font-weight:700">G6</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G6',this.value)"></td></tr>
+          <tr id="avail-row-G7"><td style="font-weight:700">G7</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G7',this.value)"></td></tr>
+          <tr id="avail-row-G8"><td style="font-weight:700">G8</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G8',this.value)"></td></tr>
         </tbody>
       </table>
+      <div style="display:flex; align-items:center; gap:.75rem; margin-top:1rem; flex-wrap:wrap;">
+        <input type="text" id="avail-name" placeholder="Your name" maxlength="60"
+          style="padding:.4rem .65rem; border:1px solid #cbd5e0; border-radius:4px; font-size:.85rem; width:160px;">
+        <button class="btn-primary" onclick="submitAvailability()">Submit</button>
+        <span id="avail-feedback" style="font-size:.8rem; color:#276749; display:none;"></span>
+      </div>
+      <div id="avail-attribution" style="display:none; font-size:.78rem; color:#718096; margin-top:.5rem;"></div>
     </div>
   </div>
 
@@ -1405,10 +1412,23 @@
       "</div>";
   }
 
+  function _showAvailAttribution(meta) {
+    const el = document.getElementById("avail-attribution");
+    if (!el || !meta) { if (el) el.style.display = "none"; return; }
+    const ts = new Date(meta.timestamp).toLocaleString("en-US", {
+      timeZone: "America/Denver", month: "short", day: "numeric",
+      hour: "numeric", minute: "2-digit"
+    });
+    el.textContent = "Last updated by " + meta.name + " · " + ts + " MT";
+    el.style.display = "block";
+  }
+
   async function loadAvailability() {
     try {
       const res = await fetch("/api/availability");
-      _availData = await res.json();
+      const raw = await res.json();
+      _availData = Object.fromEntries(Object.entries(raw).filter(([k]) => k !== "_meta"));
+      _showAvailAttribution(raw._meta || null);
     } catch(e) { _availData = {}; }
     _AVAIL_GENS.forEach(gen => {
       const entry = _availData[gen] || { status: "available", notes: "" };
@@ -1416,22 +1436,34 @@
       const row = document.getElementById("avail-row-" + gen);
       if (row) row.querySelector(".avail-notes-input").value = entry.notes || "";
     });
+    const savedName = localStorage.getItem("avail_name");
+    if (savedName) document.getElementById("avail-name").value = savedName;
   }
 
-  async function _saveAvail() {
+  async function submitAvailability() {
+    const nameEl = document.getElementById("avail-name");
+    const name = nameEl.value.trim();
+    if (!name) { nameEl.focus(); return; }
+    localStorage.setItem("avail_name", name);
+    const payload = Object.assign({}, _availData, { _name: name });
     try {
-      await fetch("/api/availability", {
+      const res = await fetch("/api/availability", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(_availData)
+        body: JSON.stringify(payload)
       });
+      const result = await res.json();
+      _showAvailAttribution({ name: result.name, timestamp: result.timestamp });
+      const fb = document.getElementById("avail-feedback");
+      fb.textContent = "Saved!";
+      fb.style.display = "inline";
+      setTimeout(() => { fb.style.display = "none"; }, 2500);
     } catch(e) { console.error("Availability save failed:", e); }
   }
 
   function setAvailStatus(gen, status) {
     _availData[gen] = Object.assign({ status: "available", notes: "" }, _availData[gen], { status });
     _renderAvailBadge(gen, status);
-    _saveAvail();
   }
 
   function onAvailNotes(gen, value) {
