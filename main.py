@@ -1201,6 +1201,46 @@ async def forecast(
         pred = float(max(mdl.predict(build_features(dataset_hr, temp, apparent, target_date))[0], 0))
         hourly.append({"hour": om_hour, "temp_f": round(temp, 1), "load": round(pred, 1)})
 
+    # ── Intraday bias correction ───────────────────────────────────────────
+    # When forecasting today, compare the last ≤3 completed hours of actuals
+    # against what the model predicted, then shift all remaining hours by that
+    # average error so the forecast tracks what's actually happening.
+    intraday_bias = 0.0
+    intraday_hours_used = 0
+    if dt == today:
+        rt_path = os.path.join(PERSIST_DIR, "realtime_load.json")
+        if not os.path.exists(rt_path):
+            rt_path = os.path.join(_BASE_DIR, "data", "realtime_load.json")
+        try:
+            with open(rt_path) as _f:
+                rt = json.load(_f)
+            if rt.get("date") == target_date:
+                now_mdt = datetime.now(ZoneInfo("America/Denver"))
+                # Current MDT hour (0-23); hours strictly before this are completed
+                current_om_hour = now_mdt.hour
+                # Collect up to last 3 completed hours that have actuals
+                bias_samples = []
+                for h in hourly:
+                    om_h = h["hour"]
+                    if om_h >= current_om_hour:
+                        continue  # not yet completed
+                    uamps_hr = str(om_h + 1)  # UAMPS hour-ending: om_hour 0 → "1"
+                    actual = rt["hours"].get(uamps_hr)
+                    if actual is not None and h["load"] is not None:
+                        bias_samples.append(actual - h["load"])
+                # Use only the last 3
+                bias_samples = bias_samples[-3:]
+                if bias_samples:
+                    intraday_bias = round(sum(bias_samples) / len(bias_samples), 1)
+                    intraday_hours_used = len(bias_samples)
+                    # Apply bias to all future (not-yet-completed) hours
+                    for h in hourly:
+                        if h["hour"] >= current_om_hour and h["load"] is not None:
+                            h["load"] = round(h["load"] + intraday_bias, 1)
+        except Exception:
+            pass  # don't break forecast if realtime data is unavailable
+    # ── End intraday bias correction ──────────────────────────────────────
+
     loads = [h["load"] for h in hourly if h["load"] is not None]
     peak = max(loads) if loads else None
     summary = {
@@ -1211,7 +1251,14 @@ async def forecast(
     }
     if fmt == "csv":
         return _hourly_to_csv(hourly)
-    return {"date": target_date, "type": "forecast", "hourly": hourly, "summary": summary}
+    return {
+        "date": target_date,
+        "type": "forecast",
+        "hourly": hourly,
+        "summary": summary,
+        "intraday_bias": intraday_bias,
+        "intraday_hours_used": intraday_hours_used,
+    }
 
 
 @app.get("/api/accuracy")
