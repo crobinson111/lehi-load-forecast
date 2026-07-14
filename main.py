@@ -1804,6 +1804,11 @@ async def serve_gen_image():
 @app.post("/api/gen-image")
 async def save_gen_image(payload: dict):
     import base64 as _b64
+    required_pin = os.environ.get("GEN_SCH_PIN", "").strip()
+    if required_pin:
+        submitted_pin = (payload.get("pin") or "").strip()
+        if submitted_pin != required_pin:
+            raise HTTPException(status_code=403, detail="Wrong PIN")
     image_data = payload.get("image", "")
     name = (payload.get("name") or "Unknown").strip()[:80]
     if not image_data:

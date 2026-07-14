@@ -540,9 +540,12 @@
       <div style="display:flex;gap:.5rem;margin-top:.9rem;align-items:center;flex-wrap:wrap">
         <input type="text" id="gen-sch-name" placeholder="Your name" maxlength="60"
                style="padding:.4rem .65rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;flex:1;min-width:140px">
+        <input type="password" id="gen-sch-pin" placeholder="PIN" maxlength="20"
+               style="padding:.4rem .65rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;width:80px">
         <button id="gen-sch-submit-btn" class="btn-primary" onclick="submitGenImage()" disabled style="opacity:.5">Submit</button>
         <button class="btn-secondary" onclick="cancelGenImage()">Cancel</button>
       </div>
+      <div id="gen-sch-pin-error" style="display:none;color:#e53e3e;font-size:.8rem;margin-top:.4rem">Wrong PIN — try again.</div>
     </div>
 
     <!-- Current schedule display -->
@@ -1510,15 +1513,27 @@
     const name = document.getElementById("gen-sch-name").value.trim();
     if (!name) { document.getElementById("gen-sch-name").focus(); return; }
     if (!_genSchPendingImage) return;
+    const pin = document.getElementById("gen-sch-pin").value;
     const btn = document.getElementById("gen-sch-submit-btn");
+    const pinErr = document.getElementById("gen-sch-pin-error");
     btn.textContent = "Saving…";
     btn.disabled = true;
+    pinErr.style.display = "none";
     try {
       const res = await fetch("/api/gen-image", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: _genSchPendingImage, name })
+        body: JSON.stringify({ image: _genSchPendingImage, name, pin })
       });
+      if (res.status === 403) {
+        pinErr.style.display = "block";
+        document.getElementById("gen-sch-pin").value = "";
+        document.getElementById("gen-sch-pin").focus();
+        btn.textContent = "Submit";
+        btn.disabled = false;
+        btn.style.opacity = "1";
+        return;
+      }
       const data = await res.json();
       if (data.ok) {
         cancelGenImage();
