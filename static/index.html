@@ -565,6 +565,7 @@
   <div id="tab-availability" class="hidden">
     <div class="chart-wrap">
       <div class="chart-title">Generator Availability</div>
+      <div style="overflow-x:auto">
       <table class="data-table" id="availability-table">
         <thead>
           <tr>
@@ -584,6 +585,7 @@
           <tr id="avail-row-G8"><td style="font-weight:700">G8</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G8',this.value)"></td></tr>
         </tbody>
       </table>
+      </div>
       <div id="avail-attribution" style="display:none; font-size:.78rem; color:#718096; margin-top:1rem;"></div>
       <div style="display:flex; align-items:center; gap:.75rem; margin-top:.5rem; flex-wrap:wrap;">
         <input type="text" id="avail-name" placeholder="Your name" maxlength="60"
