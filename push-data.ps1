@@ -76,7 +76,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "git push failed." }
         Write-Host "Successfully pushed data update for $today."
     } else {
-        Write-Host "No changes to push — data already up to date."
+        Write-Host "No changes to push - data already up to date."
     }
 } catch {
     Write-Error $_.Exception.Message
