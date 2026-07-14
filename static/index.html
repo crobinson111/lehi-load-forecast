@@ -584,13 +584,13 @@
           <tr id="avail-row-G8"><td style="font-weight:700">G8</td><td class="avail-status-cell"></td><td><input class="avail-notes-input" type="text" placeholder="Notes…" oninput="onAvailNotes('G8',this.value)"></td></tr>
         </tbody>
       </table>
-      <div style="display:flex; align-items:center; gap:.75rem; margin-top:1rem; flex-wrap:wrap;">
+      <div id="avail-attribution" style="display:none; font-size:.78rem; color:#718096; margin-top:1rem;"></div>
+      <div style="display:flex; align-items:center; gap:.75rem; margin-top:.5rem; flex-wrap:wrap;">
         <input type="text" id="avail-name" placeholder="Your name" maxlength="60"
           style="padding:.4rem .65rem; border:1px solid #cbd5e0; border-radius:4px; font-size:.85rem; width:160px;">
         <button class="btn-primary" onclick="submitAvailability()">Submit</button>
         <span id="avail-feedback" style="font-size:.8rem; color:#276749; display:none;"></span>
       </div>
-      <div id="avail-attribution" style="display:none; font-size:.78rem; color:#718096; margin-top:.5rem;"></div>
     </div>
   </div>
 
