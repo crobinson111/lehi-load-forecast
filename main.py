@@ -1988,13 +1988,16 @@ async def longterm_forecast(
         red_mesa = round(avg_rm.get(om, 0))
         steele_a = round(avg_sa.get(om, 0))
         uamps    = round(avg_uamps.get(om, 0))
-        supply   = nebo + h_butte + px + os_ + red_mesa + steele_a + uamps
-        shortage = max(0, load - supply)
+        supply       = nebo + h_butte + px + os_ + red_mesa + steele_a + uamps
+        raw_shortage = max(0, load - supply)
+        internal_gen = min(raw_shortage, 21000)
+        shortage     = raw_shortage - internal_gen
         hourly.append({
             "hour": om, "load": load,
             "nebo": nebo, "h_butte": h_butte, "px": px, "os": os_,
             "red_mesa": red_mesa, "steele_a": steele_a, "uamps": uamps,
-            "total_supply": supply, "shortage": shortage,
+            "internal_gen": internal_gen,
+            "total_supply": supply + internal_gen, "shortage": shortage,
         })
 
     avg_load     = round(sum(h["load"]     for h in hourly) / 24)
@@ -2003,7 +2006,7 @@ async def longterm_forecast(
     peak_h = max(hourly, key=lambda h: h["load"])
 
     pie = {k: round(sum(h[k] for h in hourly)) for k in
-           ["nebo", "h_butte", "px", "os", "red_mesa", "steele_a", "uamps", "shortage"]}
+           ["nebo", "h_butte", "px", "os", "red_mesa", "steele_a", "uamps", "internal_gen", "shortage"]}
 
     return {
         "month": month, "year": year,

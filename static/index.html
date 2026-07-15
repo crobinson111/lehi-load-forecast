@@ -633,7 +633,7 @@
       <div class="cards">
         <div class="card"><div class="card-label">Avg Load</div><div class="card-value" id="lt-avg-load">—<span class="card-unit"> kW</span></div></div>
         <div class="card"><div class="card-label">Avg Supply</div><div class="card-value" id="lt-avg-supply">—<span class="card-unit"> kW</span></div></div>
-        <div class="card"><div class="card-label">Avg Shortage</div><div class="card-value" id="lt-avg-shortage">—<span class="card-unit"> kW</span></div></div>
+        <div class="card"><div class="card-label">Remaining Shortage</div><div class="card-value" id="lt-avg-shortage">—<span class="card-unit"> kW</span></div></div>
         <div class="card"><div class="card-label">Peak Load</div><div class="card-value" id="lt-peak-load">—<span class="card-unit"> kW</span></div></div>
         <div class="card hour"><div class="card-label">Peak Hour</div><div class="card-value" id="lt-peak-hour">—</div></div>
       </div>
@@ -1698,19 +1698,20 @@
   let _ltPieChart = null;
 
   const _LT_COLORS = {
-    nebo:      "rgba(49,130,206,0.82)",
-    h_butte:   "rgba(72,187,120,0.82)",
-    px:        "rgba(159,122,234,0.82)",
-    os:        "rgba(56,178,172,0.82)",
-    red_mesa:  "rgba(237,137,54,0.82)",
-    steele_a:  "rgba(214,158,46,0.82)",
-    uamps:     "rgba(100,160,100,0.82)",
-    shortage:  "rgba(229,62,62,0.75)",
+    nebo:         "rgba(49,130,206,0.82)",
+    h_butte:      "rgba(72,187,120,0.82)",
+    px:           "rgba(159,122,234,0.82)",
+    os:           "rgba(56,178,172,0.82)",
+    red_mesa:     "rgba(237,137,54,0.82)",
+    steele_a:     "rgba(214,158,46,0.82)",
+    uamps:        "rgba(100,160,100,0.82)",
+    internal_gen: "rgba(56,161,105,0.88)",
+    shortage:     "rgba(229,62,62,0.75)",
   };
   const _LT_LABELS = {
     nebo: "Nebo", h_butte: "Horse Butte", px: "PX", os: "OS",
     red_mesa: "Red Mesa", steele_a: "Steele A", uamps: "UAMPS",
-    shortage: "Shortage",
+    internal_gen: "Internal Gen (21 MW)", shortage: "Remaining Shortage",
   };
 
   async function runLongterm() {
@@ -1756,8 +1757,9 @@
           { label: "OS",         data: data.hourly.map(h => h.os),       stack: "s", backgroundColor: _LT_COLORS.os,       yAxisID: "y" },
           { label: "Red Mesa",   data: data.hourly.map(h => h.red_mesa), stack: "s", backgroundColor: _LT_COLORS.red_mesa, yAxisID: "y" },
           { label: "Steele A",   data: data.hourly.map(h => h.steele_a), stack: "s", backgroundColor: _LT_COLORS.steele_a, yAxisID: "y" },
-          { label: "UAMPS",      data: data.hourly.map(h => h.uamps),    stack: "s", backgroundColor: _LT_COLORS.uamps,    yAxisID: "y" },
-          { label: "Shortage",   data: data.hourly.map(h => h.shortage), stack: "s", backgroundColor: _LT_COLORS.shortage, yAxisID: "y" },
+          { label: "UAMPS",        data: data.hourly.map(h => h.uamps),        stack: "s", backgroundColor: _LT_COLORS.uamps,        yAxisID: "y" },
+          { label: "Internal Gen (21 MW)", data: data.hourly.map(h => h.internal_gen), stack: "s", backgroundColor: _LT_COLORS.internal_gen, yAxisID: "y" },
+          { label: "Remaining Shortage",   data: data.hourly.map(h => h.shortage),     stack: "s", backgroundColor: _LT_COLORS.shortage,     yAxisID: "y" },
           { type: "line", label: "Avg Load",
             data: loadData, borderColor: "rgba(229,62,62,1)", backgroundColor: "transparent",
             borderWidth: 2.5, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y" },
@@ -1781,7 +1783,7 @@
     });
 
     // Pie chart — daily totals (sum of 24 hourly averages)
-    const pieKeys    = ["nebo","h_butte","px","os","red_mesa","steele_a","uamps","shortage"];
+    const pieKeys    = ["nebo","h_butte","px","os","red_mesa","steele_a","uamps","internal_gen","shortage"];
     const pieValues  = pieKeys.map(k => data.pie[k] || 0);
     const pieTotal   = pieValues.reduce((a, b) => a + b, 0);
     const pieColors  = pieKeys.map(k => _LT_COLORS[k]);
