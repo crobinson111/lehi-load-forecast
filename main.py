@@ -1946,19 +1946,23 @@ async def longterm_forecast(
     avg_px = recent_rows.set_index("om_hour")["px"].to_dict()
     avg_os = recent_rows.set_index("om_hour")["os"].to_dict()
 
-    # Red Mesa solar
-    try:
-        rm_df = load_plant_data("red-mesa")
-        avg_rm = _avg_by_hr(rm_df, "kwh")
-    except Exception:
-        avg_rm = {}
+    # Red Mesa solar — load from local CSV (in repo), fall back to URL env var
+    def _load_solar_csv(local_name: str, url_env: str) -> pd.DataFrame:
+        local = os.path.join(_BASE_DIR, "data", local_name)
+        if os.path.exists(local):
+            df = pd.read_csv(local)
+        else:
+            url = os.environ.get(url_env, "")
+            if not url:
+                return pd.DataFrame(columns=["date", "hr", "kwh"])
+            df = pd.read_csv(_io.StringIO(httpx.get(url, timeout=30).text))
+        df["date"] = df["date"].astype(str)
+        df["hr"]   = df["hr"].astype(int)
+        df["kwh"]  = pd.to_numeric(df["kwh"], errors="coerce").fillna(0)
+        return df[["date", "hr", "kwh"]]
 
-    # Steele A solar
-    try:
-        sa_df = load_plant_data("steele-a")
-        avg_sa = _avg_by_hr(sa_df, "kwh")
-    except Exception:
-        avg_sa = {}
+    avg_rm = _avg_by_hr(_load_solar_csv("red_mesa_history.csv",  "RED_MESA_CSV_URL"),  "kwh")
+    avg_sa = _avg_by_hr(_load_solar_csv("steele_a_history.csv",  "STEELE_A_CSV_URL"),  "kwh")
 
     # UAMPS (no historical Aug data — use all available, averaged by hour)
     uamps_url = os.environ.get("UAMPS_CSV_URL")
