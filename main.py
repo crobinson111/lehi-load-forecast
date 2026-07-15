@@ -1938,16 +1938,26 @@ async def longterm_forecast(
     # Nebo and Horse Butte are weather/dispatch dependent — use historical avg
     avg_nebo    = _avg_by_hr(sup_df, "nebo")
     avg_h_butte = _avg_by_hr(sup_df, "h_butte")
-    # PX and OS are contract schedules — use the most recent historical data for
-    # this same calendar month (e.g. August 2027 → August 2025 actuals), so the
-    # seasonal schedule is correct. Fall back to overall most-recent if no same-
-    # month data exists.
-    same_month_dates = sup_df[sup_df["date"].astype(str).str.contains(month_str)]["date"].astype(str)
-    ref_date = same_month_dates.max() if not same_month_dates.empty else sup_df["date"].astype(str).max()
-    recent_rows = sup_df[sup_df["date"].astype(str) == ref_date].copy()
-    recent_rows["om_hour"] = recent_rows["hr"].astype(int) - 1
-    avg_px = recent_rows.set_index("om_hour")["px"].to_dict()
-    avg_os = recent_rows.set_index("om_hour")["os"].to_dict()
+    # PX and OS: check future_schedule.csv for locked-in contract values first.
+    # Fall back to most-recent same-calendar-month historical data if not found.
+    future_sched_path = os.path.join(_BASE_DIR, "data", "future_schedule.csv")
+    avg_px: dict = {}
+    avg_os: dict = {}
+    if os.path.exists(future_sched_path):
+        fs = pd.read_csv(future_sched_path)
+        fs_match = fs[(fs["year"].astype(int) == year) & (fs["month"].astype(int) == month)]
+        if not fs_match.empty:
+            fs_match = fs_match.copy()
+            fs_match["om_hour"] = fs_match["hr"].astype(int) - 1
+            avg_px = fs_match.set_index("om_hour")["px"].astype(float).to_dict()
+            avg_os = fs_match.set_index("om_hour")["os"].astype(float).to_dict()
+    if not avg_px:
+        same_month_dates = sup_df[sup_df["date"].astype(str).str.contains(month_str)]["date"].astype(str)
+        ref_date = same_month_dates.max() if not same_month_dates.empty else sup_df["date"].astype(str).max()
+        recent_rows = sup_df[sup_df["date"].astype(str) == ref_date].copy()
+        recent_rows["om_hour"] = recent_rows["hr"].astype(int) - 1
+        avg_px = recent_rows.set_index("om_hour")["px"].to_dict()
+        avg_os = recent_rows.set_index("om_hour")["os"].to_dict()
 
     # Red Mesa solar — load from local CSV (in repo), fall back to URL env var
     def _load_solar_csv(local_name: str, url_env: str) -> pd.DataFrame:
