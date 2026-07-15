@@ -1938,10 +1938,13 @@ async def longterm_forecast(
     # Nebo and Horse Butte are weather/dispatch dependent — use historical avg
     avg_nebo    = _avg_by_hr(sup_df, "nebo")
     avg_h_butte = _avg_by_hr(sup_df, "h_butte")
-    # PX and OS are contract schedules — use the most recent day's actual values
-    # rather than a diluted multi-year average (contracts have grown over time)
-    most_recent = sup_df["date"].astype(str).max()
-    recent_rows = sup_df[sup_df["date"].astype(str) == most_recent].copy()
+    # PX and OS are contract schedules — use the most recent historical data for
+    # this same calendar month (e.g. August 2027 → August 2025 actuals), so the
+    # seasonal schedule is correct. Fall back to overall most-recent if no same-
+    # month data exists.
+    same_month_dates = sup_df[sup_df["date"].astype(str).str.contains(month_str)]["date"].astype(str)
+    ref_date = same_month_dates.max() if not same_month_dates.empty else sup_df["date"].astype(str).max()
+    recent_rows = sup_df[sup_df["date"].astype(str) == ref_date].copy()
     recent_rows["om_hour"] = recent_rows["hr"].astype(int) - 1
     avg_px = recent_rows.set_index("om_hour")["px"].to_dict()
     avg_os = recent_rows.set_index("om_hour")["os"].to_dict()
