@@ -303,6 +303,7 @@
     <button class="tab-btn"        id="tab-btn-solar-steele-a"  onclick="switchTab('solar-steele-a')">Steele A Solar</button>
     <button class="tab-btn"        id="tab-btn-wind-horse-butte" onclick="switchTab('wind-horse-butte')">Horse Butte Wind</button>
     <button class="tab-btn"        id="tab-btn-supply"          onclick="switchTab('supply')">Supply Portfolio</button>
+    <button class="tab-btn"        id="tab-btn-longterm"        onclick="switchTab('longterm')">Long Term</button>
   </div>
 
   <!-- ══════════════════════ TAB 1: FORECAST ══════════════════════ -->
@@ -599,6 +600,58 @@
     </div>
   </div>
 
+  <!-- ══════════════════════ TAB 8: LONG TERM PLANNING ══════════════════════ -->
+  <div id="tab-longterm" class="hidden">
+
+    <div class="controls">
+      <div class="field">
+        <label for="lt-month">Month</label>
+        <select id="lt-month" style="padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem">
+          <option value="1">January</option><option value="2">February</option>
+          <option value="3">March</option><option value="4">April</option>
+          <option value="5">May</option><option value="6">June</option>
+          <option value="7">July</option><option value="8" selected>August</option>
+          <option value="9">September</option><option value="10">October</option>
+          <option value="11">November</option><option value="12">December</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="lt-year">Year</label>
+        <select id="lt-year" style="padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem">
+          <option value="2026">2026</option><option value="2027" selected>2027</option>
+          <option value="2028">2028</option><option value="2029">2029</option>
+          <option value="2030">2030</option><option value="2031">2031</option>
+          <option value="2032">2032</option><option value="2033">2033</option>
+        </select>
+      </div>
+      <button class="btn-primary" onclick="runLongterm()">Run Forecast</button>
+      <span id="lt-status" style="font-size:.82rem;color:#718096;display:none"></span>
+    </div>
+
+    <div id="lt-results" class="hidden">
+      <!-- Summary cards -->
+      <div class="cards">
+        <div class="card"><div class="card-label">Avg Load</div><div class="card-value" id="lt-avg-load">—<span class="card-unit"> kW</span></div></div>
+        <div class="card"><div class="card-label">Avg Supply</div><div class="card-value" id="lt-avg-supply">—<span class="card-unit"> kW</span></div></div>
+        <div class="card"><div class="card-label">Avg Shortage</div><div class="card-value" id="lt-avg-shortage">—<span class="card-unit"> kW</span></div></div>
+        <div class="card"><div class="card-label">Peak Load</div><div class="card-value" id="lt-peak-load">—<span class="card-unit"> kW</span></div></div>
+        <div class="card hour"><div class="card-label">Peak Hour</div><div class="card-value" id="lt-peak-hour">—</div></div>
+      </div>
+
+      <!-- 24-hour stacked chart -->
+      <div class="chart-wrap">
+        <div class="chart-title" id="lt-chart-title">Hourly Avg Load vs Supply</div>
+        <div class="chart-container"><canvas id="lt-chart"></canvas></div>
+      </div>
+
+      <!-- Pie chart -->
+      <div class="chart-wrap" style="max-width:540px;margin-top:1.25rem">
+        <div class="chart-title">Resource Mix (Daily Avg kW)</div>
+        <div style="position:relative;height:320px"><canvas id="lt-pie-chart"></canvas></div>
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <script>
@@ -625,7 +678,7 @@
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply"].forEach(t => {
+    ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "longterm"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -1638,6 +1691,121 @@
       }
     }
   });
+
+  // ── Long Term Planning ────────────────────────────────────────────────
+
+  let _ltChart    = null;
+  let _ltPieChart = null;
+
+  const _LT_COLORS = {
+    nebo:      "rgba(49,130,206,0.82)",
+    h_butte:   "rgba(72,187,120,0.82)",
+    px:        "rgba(159,122,234,0.82)",
+    os:        "rgba(56,178,172,0.82)",
+    red_mesa:  "rgba(237,137,54,0.82)",
+    steele_a:  "rgba(214,158,46,0.82)",
+    uamps:     "rgba(100,160,100,0.82)",
+    shortage:  "rgba(229,62,62,0.75)",
+  };
+  const _LT_LABELS = {
+    nebo: "Nebo", h_butte: "Horse Butte", px: "PX", os: "OS",
+    red_mesa: "Red Mesa", steele_a: "Steele A", uamps: "UAMPS",
+    shortage: "Shortage",
+  };
+
+  async function runLongterm() {
+    const month  = document.getElementById("lt-month").value;
+    const year   = document.getElementById("lt-year").value;
+    const status = document.getElementById("lt-status");
+    status.textContent = "Running…";
+    status.style.display = "inline";
+    try {
+      const res  = await fetch(`/api/longterm?month=${month}&year=${year}`);
+      const data = await res.json();
+      if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
+      renderLongterm(data);
+      status.style.display = "none";
+    } catch(e) {
+      status.textContent = "Network error";
+    }
+  }
+
+  function renderLongterm(data) {
+    const s = data.summary;
+    document.getElementById("lt-chart-title").textContent = `Hourly Avg Load vs Supply — ${data.label}`;
+    document.getElementById("lt-avg-load").innerHTML     = `${s.avg_load.toLocaleString()}<span class="card-unit"> kW</span>`;
+    document.getElementById("lt-avg-supply").innerHTML   = `${s.avg_supply.toLocaleString()}<span class="card-unit"> kW</span>`;
+    document.getElementById("lt-avg-shortage").innerHTML = `${s.avg_shortage.toLocaleString()}<span class="card-unit"> kW</span>`;
+    document.getElementById("lt-peak-load").innerHTML    = `${s.peak_load.toLocaleString()}<span class="card-unit"> kW</span>`;
+    document.getElementById("lt-peak-hour").textContent  = fmt12(s.peak_hour);
+    document.getElementById("lt-results").classList.remove("hidden");
+
+    const labels   = data.hourly.map(h => fmt12(h.hour));
+    const loadData = data.hourly.map(h => h.load);
+
+    // Stacked bar chart
+    if (_ltChart) _ltChart.destroy();
+    _ltChart = new Chart(document.getElementById("lt-chart").getContext("2d"), {
+      type: "bar",
+      data: {
+        labels,
+        datasets: [
+          { label: "Nebo",       data: data.hourly.map(h => h.nebo),     stack: "s", backgroundColor: _LT_COLORS.nebo,     yAxisID: "y" },
+          { label: "Horse Butte",data: data.hourly.map(h => h.h_butte),  stack: "s", backgroundColor: _LT_COLORS.h_butte,  yAxisID: "y" },
+          { label: "PX",         data: data.hourly.map(h => h.px),       stack: "s", backgroundColor: _LT_COLORS.px,       yAxisID: "y" },
+          { label: "OS",         data: data.hourly.map(h => h.os),       stack: "s", backgroundColor: _LT_COLORS.os,       yAxisID: "y" },
+          { label: "Red Mesa",   data: data.hourly.map(h => h.red_mesa), stack: "s", backgroundColor: _LT_COLORS.red_mesa, yAxisID: "y" },
+          { label: "Steele A",   data: data.hourly.map(h => h.steele_a), stack: "s", backgroundColor: _LT_COLORS.steele_a, yAxisID: "y" },
+          { label: "UAMPS",      data: data.hourly.map(h => h.uamps),    stack: "s", backgroundColor: _LT_COLORS.uamps,    yAxisID: "y" },
+          { label: "Shortage",   data: data.hourly.map(h => h.shortage), stack: "s", backgroundColor: _LT_COLORS.shortage, yAxisID: "y" },
+          { type: "line", label: "Avg Load",
+            data: loadData, borderColor: "rgba(229,62,62,1)", backgroundColor: "transparent",
+            borderWidth: 2.5, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y" },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "top" },
+          tooltip: { callbacks: { label: ctx => {
+            const v = ctx.parsed.y;
+            return ` ${ctx.dataset.label}: ${v != null ? Math.round(v).toLocaleString() + " kW" : "n/a"}`;
+          }}},
+        },
+        scales: {
+          y: { stacked: true, title: { display: true, text: "kW" }, beginAtZero: true },
+          x: { stacked: true },
+        },
+      },
+    });
+
+    // Pie chart — daily totals (sum of 24 hourly averages)
+    const pieKeys    = ["nebo","h_butte","px","os","red_mesa","steele_a","uamps","shortage"];
+    const pieValues  = pieKeys.map(k => data.pie[k] || 0);
+    const pieTotal   = pieValues.reduce((a, b) => a + b, 0);
+    const pieColors  = pieKeys.map(k => _LT_COLORS[k]);
+    const pieLabels  = pieKeys.map(k => {
+      const pct = pieTotal > 0 ? ((data.pie[k] || 0) / pieTotal * 100).toFixed(1) : "0.0";
+      return `${_LT_LABELS[k]} (${pct}%)`;
+    });
+
+    if (_ltPieChart) _ltPieChart.destroy();
+    _ltPieChart = new Chart(document.getElementById("lt-pie-chart").getContext("2d"), {
+      type: "pie",
+      data: { labels: pieLabels, datasets: [{ data: pieValues, backgroundColor: pieColors, borderWidth: 1 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: {
+          legend: { position: "right", labels: { font: { size: 12 }, padding: 10 } },
+          tooltip: { callbacks: { label: ctx => {
+            const v = ctx.parsed;
+            return ` ${Math.round(v).toLocaleString()} kW`;
+          }}},
+        },
+      },
+    });
+  }
 
   // ── Init ──────────────────────────────────────────────────────────────
   switchTab("gen-sch");

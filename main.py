@@ -1855,4 +1855,158 @@ async def save_availability(payload: dict):
     return {"ok": True, "timestamp": now.isoformat(), "name": name}
 
 
+@app.get("/api/longterm")
+async def longterm_forecast(
+    month: int = Query(..., ge=1, le=12),
+    year:  int = Query(..., ge=2020, le=2040),
+):
+    """Average hourly load + supply breakdown for a future month, using historical averages."""
+    import calendar as _cal
+
+    mdl = model_state["model"]
+    if mdl is None:
+        raise HTTPException(status_code=503, detail="Model not ready — please wait or retrain.")
+
+    month_str = f"-{month:02d}-"
+
+    # ── 1. Historical avg temperatures for this calendar month ───────────
+    weather_data: dict = _load_weather_csv("LOAD_WEATHER_CSV_URL")
+    if not weather_data:
+        wx_path = os.path.join(_BASE_DIR, "data", "load_weather.csv")
+        if os.path.exists(wx_path):
+            df_wx = pd.read_csv(wx_path)
+            for _, row in df_wx.iterrows():
+                om_hour = int(row["hr"]) - 1
+                weather_data.setdefault(str(row["date"]), {})[om_hour] = {
+                    "temp_f": float(row["temp_f"]),
+                    "apparent_f": float(row["apparent_f"]),
+                }
+
+    temp_accum: dict = {}
+    for d_str, hours in weather_data.items():
+        if month_str not in d_str:
+            continue
+        for om_hour, wx in hours.items():
+            if om_hour not in temp_accum:
+                temp_accum[om_hour] = {"temp_f": [], "apparent_f": []}
+            temp_accum[om_hour]["temp_f"].append(wx["temp_f"])
+            temp_accum[om_hour]["apparent_f"].append(wx["apparent_f"])
+
+    if not temp_accum:
+        raise HTTPException(status_code=404, detail=f"No historical weather data for month {month}. Run this for a month that appears in past years.")
+
+    avg_temps = {
+        om: {"temp_f": sum(v["temp_f"]) / len(v["temp_f"]),
+             "apparent_f": sum(v["apparent_f"]) / len(v["apparent_f"])}
+        for om, v in temp_accum.items()
+    }
+
+    # ── 2. Predict load for each day × hour, average by hour ─────────────
+    _, days_in_month = _cal.monthrange(year, month)
+    month_days = [date(year, month, d) for d in range(1, days_in_month + 1)]
+
+    hour_loads: dict = {om: [] for om in range(24)}
+    for day in month_days:
+        date_str = day.isoformat()
+        for om_hour in range(24):
+            if om_hour not in avg_temps:
+                continue
+            wx = avg_temps[om_hour]
+            hr = om_hour + 1
+            pred = float(max(mdl.predict(
+                build_features(hr, wx["temp_f"], wx["apparent_f"], date_str)
+            )[0], 0))
+            hour_loads[om_hour].append(pred)
+
+    # ── 3. Historical avg supply for this calendar month ─────────────────
+    def _avg_by_hr(df: pd.DataFrame, val_col: str) -> dict:
+        """Returns {om_hour: avg_value} for rows matching the target month."""
+        sub = df[df["date"].astype(str).str.contains(month_str)].copy()
+        sub["om_hour"] = sub["hr"].astype(int) - 1
+        sub[val_col] = pd.to_numeric(sub[val_col], errors="coerce").fillna(0)
+        return sub.groupby("om_hour")[val_col].mean().to_dict()
+
+    # Base supply (nebo, h_butte, px, os)
+    sup_url = os.environ.get("SUPPLY_HISTORY_CSV_URL")
+    if sup_url:
+        import io as _io
+        sup_df = pd.read_csv(_io.StringIO(httpx.get(sup_url, timeout=30).text))
+    else:
+        sup_df = pd.read_csv(os.path.join(_BASE_DIR, "data", "supply_history.csv"))
+    for col in ["nebo", "h_butte", "px", "os"]:
+        sup_df[col] = pd.to_numeric(sup_df[col], errors="coerce").fillna(0)
+    sup_df["base"] = sup_df["nebo"] + sup_df["h_butte"] + sup_df["px"] + sup_df["os"]
+    avg_nebo    = _avg_by_hr(sup_df, "nebo")
+    avg_h_butte = _avg_by_hr(sup_df, "h_butte")
+    avg_px      = _avg_by_hr(sup_df, "px")
+    avg_os      = _avg_by_hr(sup_df, "os")
+
+    # Red Mesa solar
+    try:
+        rm_df = load_plant_data("red-mesa")
+        avg_rm = _avg_by_hr(rm_df, "kwh")
+    except Exception:
+        avg_rm = {}
+
+    # Steele A solar
+    try:
+        sa_df = load_plant_data("steele-a")
+        avg_sa = _avg_by_hr(sa_df, "kwh")
+    except Exception:
+        avg_sa = {}
+
+    # UAMPS (no historical Aug data — use all available, averaged by hour)
+    uamps_url = os.environ.get("UAMPS_CSV_URL")
+    if uamps_url:
+        u_df = pd.read_csv(_io.StringIO(httpx.get(uamps_url, timeout=30).text))
+    else:
+        u_df = pd.read_csv(os.path.join(_BASE_DIR, "data", "uamps_schedule.csv"))
+    for col in ["crsp", "provo_riv", "veyo"]:
+        u_df[col] = pd.to_numeric(u_df[col], errors="coerce").fillna(0)
+    u_df["om_hour"] = u_df["hr"].astype(int) - 1
+    u_df["uamps"] = u_df["crsp"] + u_df["provo_riv"] + u_df["veyo"]
+    avg_uamps = u_df.groupby("om_hour")["uamps"].mean().to_dict()
+
+    # ── 4. Build hourly result ────────────────────────────────────────────
+    month_name = _cal.month_name[month]
+    hourly = []
+    for om in range(24):
+        load     = round(sum(hour_loads[om]) / len(hour_loads[om])) if hour_loads[om] else 0
+        nebo     = round(avg_nebo.get(om, 0))
+        h_butte  = round(avg_h_butte.get(om, 0))
+        px       = round(avg_px.get(om, 0))
+        os_      = round(avg_os.get(om, 0))
+        red_mesa = round(avg_rm.get(om, 0))
+        steele_a = round(avg_sa.get(om, 0))
+        uamps    = round(avg_uamps.get(om, 0))
+        supply   = nebo + h_butte + px + os_ + red_mesa + steele_a + uamps
+        shortage = max(0, load - supply)
+        hourly.append({
+            "hour": om, "load": load,
+            "nebo": nebo, "h_butte": h_butte, "px": px, "os": os_,
+            "red_mesa": red_mesa, "steele_a": steele_a, "uamps": uamps,
+            "total_supply": supply, "shortage": shortage,
+        })
+
+    avg_load     = round(sum(h["load"]     for h in hourly) / 24)
+    avg_supply   = round(sum(h["total_supply"] for h in hourly) / 24)
+    avg_shortage = round(sum(h["shortage"] for h in hourly) / 24)
+    peak_h = max(hourly, key=lambda h: h["load"])
+
+    pie = {k: round(sum(h[k] for h in hourly)) for k in
+           ["nebo", "h_butte", "px", "os", "red_mesa", "steele_a", "uamps", "shortage"]}
+
+    return {
+        "month": month, "year": year,
+        "label": f"{month_name} {year}",
+        "hourly": hourly,
+        "summary": {
+            "avg_load": avg_load, "avg_supply": avg_supply,
+            "avg_shortage": avg_shortage,
+            "peak_load": peak_h["load"], "peak_hour": peak_h["hour"],
+        },
+        "pie": pie,
+    }
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
