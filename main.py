@@ -1935,11 +1935,16 @@ async def longterm_forecast(
         sup_df = pd.read_csv(os.path.join(_BASE_DIR, "data", "supply_history.csv"))
     for col in ["nebo", "h_butte", "px", "os"]:
         sup_df[col] = pd.to_numeric(sup_df[col], errors="coerce").fillna(0)
-    sup_df["base"] = sup_df["nebo"] + sup_df["h_butte"] + sup_df["px"] + sup_df["os"]
+    # Nebo and Horse Butte are weather/dispatch dependent — use historical avg
     avg_nebo    = _avg_by_hr(sup_df, "nebo")
     avg_h_butte = _avg_by_hr(sup_df, "h_butte")
-    avg_px      = _avg_by_hr(sup_df, "px")
-    avg_os      = _avg_by_hr(sup_df, "os")
+    # PX and OS are contract schedules — use the most recent day's actual values
+    # rather than a diluted multi-year average (contracts have grown over time)
+    most_recent = sup_df["date"].astype(str).max()
+    recent_rows = sup_df[sup_df["date"].astype(str) == most_recent].copy()
+    recent_rows["om_hour"] = recent_rows["hr"].astype(int) - 1
+    avg_px = recent_rows.set_index("om_hour")["px"].to_dict()
+    avg_os = recent_rows.set_index("om_hour")["os"].to_dict()
 
     # Red Mesa solar
     try:
