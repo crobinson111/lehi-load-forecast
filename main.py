@@ -1945,12 +1945,33 @@ async def longterm_forecast(
     avg_os: dict = {}
     if os.path.exists(future_sched_path):
         fs = pd.read_csv(future_sched_path)
+        fs.columns = fs.columns.str.strip().str.lower()
         fs_match = fs[(fs["year"].astype(int) == year) & (fs["month"].astype(int) == month)]
-        if not fs_match.empty:
-            fs_match = fs_match.copy()
-            fs_match["om_hour"] = fs_match["hr"].astype(int) - 1
-            avg_px = fs_match.set_index("om_hour")["px"].astype(float).to_dict()
-            avg_os = fs_match.set_index("om_hour")["os"].astype(float).to_dict()
+        # Only use if at least one row has a non-empty PX or OS value
+        has_values = fs_match[["px","os"]].apply(pd.to_numeric, errors="coerce").notna().any(axis=None)
+        if not fs_match.empty and has_values:
+            px_by_hour = {om: 0.0 for om in range(24)}
+            os_by_hour = {om: 0.0 for om in range(24)}
+            for _, row in fs_match.iterrows():
+                hr_str = str(row["hr"]).strip()
+                # Parse range "8-23" or single "14"
+                if "-" in hr_str:
+                    parts = hr_str.split("-")
+                    hr_start, hr_end = int(parts[0]), int(parts[1])
+                else:
+                    hr_start = hr_end = int(hr_str)
+                # Values are in MW — convert to kW; blank = 0
+                px_mw = pd.to_numeric(row["px"], errors="coerce")
+                os_mw = pd.to_numeric(row["os"], errors="coerce")
+                px_kw = float(px_mw) * 1000 if pd.notna(px_mw) else 0.0
+                os_kw = float(os_mw) * 1000 if pd.notna(os_mw) else 0.0
+                for hr in range(hr_start, hr_end + 1):
+                    om = hr - 1
+                    if 0 <= om <= 23:
+                        px_by_hour[om] += px_kw
+                        os_by_hour[om] += os_kw
+            avg_px = px_by_hour
+            avg_os = os_by_hour
     if not avg_px:
         same_month_dates = sup_df[sup_df["date"].astype(str).str.contains(month_str)]["date"].astype(str)
         ref_date = same_month_dates.max() if not same_month_dates.empty else sup_df["date"].astype(str).max()
