@@ -2118,4 +2118,208 @@ async def longterm_forecast(
     }
 
 
+@app.get("/api/dayplan")
+async def day_plan(
+    target_date: str = Query(..., alias="date"),
+):
+    """Single-day load forecast with full hourly supply breakdown."""
+    import calendar as _cal
+
+    if model_state["model"] is None:
+        raise HTTPException(status_code=503, detail="Model not ready.")
+    try:
+        dt = datetime.strptime(target_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+    today = date.today()
+    if dt > today + timedelta(days=16):
+        raise HTTPException(status_code=400, detail="Date is beyond the 16-day forecast window.")
+
+    month     = dt.month
+    year      = dt.year
+    month_str = f"-{month:02d}-"
+    mdl       = model_state["model"]
+
+    # ── 1. Hourly load ─────────────────────────────────────────────────────
+    if target_date in model_state["history"]:
+        day_hist = model_state["history"][target_date]
+        try:
+            wx_data = await fetch_weather(target_date, target_date, use_forecast_api=False)
+            day_wx  = wx_data.get(target_date, {})
+        except Exception:
+            day_wx = {}
+        hour_loads = {om: day_hist.get(om) for om in range(24)}
+        hour_temps  = {om: day_wx.get(om, {}).get("temp_f") for om in range(24)}
+        data_type   = "historical"
+    else:
+        use_fc = dt >= today - timedelta(days=7)
+        try:
+            wx_data = await fetch_weather(target_date, target_date, use_forecast_api=use_fc)
+            day_wx  = wx_data.get(target_date, {})
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Weather API error: {exc}")
+        if not day_wx:
+            raise HTTPException(status_code=404, detail=f"No weather data for {target_date}.")
+        hour_loads = {}
+        hour_temps  = {}
+        for om in range(24):
+            wx = day_wx.get(om)
+            if wx:
+                pred = float(max(mdl.predict(build_features(om + 1, wx["temp_f"], wx["apparent_f"], target_date))[0], 0))
+                hour_loads[om] = round(pred, 1)
+                hour_temps[om]  = round(wx["temp_f"], 1)
+            else:
+                hour_loads[om] = None
+                hour_temps[om]  = None
+        data_type = "forecast"
+
+    # ── 2. Supply (same logic as /api/longterm for this month/year) ────────
+    import io as _io
+
+    def _avg_by_hr(df: pd.DataFrame, val_col: str) -> dict:
+        sub = df[df["date"].astype(str).str.contains(month_str)].copy()
+        sub["om_hour"] = sub["hr"].astype(int) - 1
+        sub[val_col] = pd.to_numeric(sub[val_col], errors="coerce").fillna(0)
+        return sub.groupby("om_hour")[val_col].mean().to_dict()
+
+    sup_url = os.environ.get("SUPPLY_HISTORY_CSV_URL")
+    if sup_url:
+        sup_df = pd.read_csv(_io.StringIO(httpx.get(sup_url, timeout=30).text))
+    else:
+        sup_df = pd.read_csv(os.path.join(_BASE_DIR, "data", "supply_history.csv"))
+    for col in ["nebo", "h_butte", "px", "os"]:
+        sup_df[col] = pd.to_numeric(sup_df[col], errors="coerce").fillna(0)
+
+    avg_nebo    = _avg_by_hr(sup_df, "nebo")
+    avg_h_butte = _avg_by_hr(sup_df, "h_butte")
+
+    future_sched_path = os.path.join(_BASE_DIR, "data", "future_schedule.csv")
+    avg_px: dict = {}
+    avg_os: dict = {}
+    if os.path.exists(future_sched_path):
+        fs = pd.read_csv(future_sched_path)
+        fs.columns = fs.columns.str.strip().str.lower()
+        fs_match = fs[(fs["year"].astype(int) == year) & (fs["month"].astype(int) == month)]
+        has_values = fs_match[["px","os"]].apply(pd.to_numeric, errors="coerce").notna().any(axis=None)
+        if not fs_match.empty and has_values:
+            px_by_hour = {om: 0.0 for om in range(24)}
+            os_by_hour = {om: 0.0 for om in range(24)}
+            for _, row in fs_match.iterrows():
+                hr_str = str(row["hr"]).strip()
+                s, e = (int(hr_str.split("-")[0]), int(hr_str.split("-")[1])) if "-" in hr_str else (int(hr_str), int(hr_str))
+                px_kw = float(pd.to_numeric(row["px"], errors="coerce") or 0) * 1000
+                os_kw = float(pd.to_numeric(row["os"], errors="coerce") or 0) * 1000
+                for hr in range(s, e + 1):
+                    om = hr - 1
+                    if 0 <= om <= 23:
+                        px_by_hour[om] += px_kw
+                        os_by_hour[om] += os_kw
+            avg_px = px_by_hour
+            avg_os = os_by_hour
+        if "nebo" in fs.columns:
+            nebo_has = fs_match["nebo"].apply(pd.to_numeric, errors="coerce").notna().any()
+            if not fs_match.empty and nebo_has:
+                nebo_by_hour = {om: avg_nebo.get(om, 0) for om in range(24)}
+                for _, row in fs_match.iterrows():
+                    hr_str = str(row["hr"]).strip()
+                    s, e = (int(hr_str.split("-")[0]), int(hr_str.split("-")[1])) if "-" in hr_str else (int(hr_str), int(hr_str))
+                    nebo_mw = pd.to_numeric(row["nebo"], errors="coerce")
+                    if pd.notna(nebo_mw):
+                        nebo_kw = float(nebo_mw) * 1000
+                        for hr in range(s, e + 1):
+                            om = hr - 1
+                            if 0 <= om <= 23:
+                                nebo_by_hour[om] = nebo_kw
+                avg_nebo = nebo_by_hour
+    if not avg_px:
+        same = sup_df[sup_df["date"].astype(str).str.contains(month_str)]["date"].astype(str)
+        ref  = same.max() if not same.empty else sup_df["date"].astype(str).max()
+        rec  = sup_df[sup_df["date"].astype(str) == ref].copy()
+        rec["om_hour"] = rec["hr"].astype(int) - 1
+        avg_px = rec.set_index("om_hour")["px"].to_dict()
+        avg_os = rec.set_index("om_hour")["os"].to_dict()
+
+    def _load_solar_csv(local_name: str, url_env: str) -> pd.DataFrame:
+        local = os.path.join(_BASE_DIR, "data", local_name)
+        if os.path.exists(local):
+            df = pd.read_csv(local)
+        else:
+            url = os.environ.get(url_env, "")
+            if not url:
+                return pd.DataFrame(columns=["date", "hr", "kwh"])
+            df = pd.read_csv(_io.StringIO(httpx.get(url, timeout=30).text))
+        df["date"] = df["date"].astype(str)
+        df["hr"]   = df["hr"].astype(int)
+        df["kwh"]  = pd.to_numeric(df["kwh"], errors="coerce").fillna(0)
+        return df[["date", "hr", "kwh"]]
+
+    def _operational_only(df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df["kwh"] = pd.to_numeric(df["kwh"], errors="coerce").fillna(0)
+        active = df[df["kwh"] > 0]
+        if active.empty:
+            return df
+        return df[df["date"].astype(str) >= active["date"].astype(str).min()]
+
+    avg_rm = _avg_by_hr(_operational_only(_load_solar_csv("red_mesa_history.csv",  "RED_MESA_CSV_URL")),  "kwh")
+    avg_sa = _avg_by_hr(_operational_only(_load_solar_csv("steele_a_history.csv",  "STEELE_A_CSV_URL")),  "kwh")
+
+    uamps_url = os.environ.get("UAMPS_CSV_URL")
+    if uamps_url:
+        u_df = pd.read_csv(_io.StringIO(httpx.get(uamps_url, timeout=30).text))
+    else:
+        u_df = pd.read_csv(os.path.join(_BASE_DIR, "data", "uamps_schedule.csv"))
+    for col in ["crsp", "provo_riv", "veyo"]:
+        u_df[col] = pd.to_numeric(u_df[col], errors="coerce").fillna(0)
+    u_df["om_hour"] = u_df["hr"].astype(int) - 1
+    u_df["uamps"]   = u_df["crsp"] + u_df["provo_riv"] + u_df["veyo"]
+    avg_uamps = u_df.groupby("om_hour")["uamps"].mean().to_dict()
+
+    # ── 3. Build hourly output ─────────────────────────────────────────────
+    hourly = []
+    daily_shortage_kw = 0.0
+    for om in range(24):
+        load     = hour_loads.get(om)
+        temp     = hour_temps.get(om)
+        nebo     = round(avg_nebo.get(om, 0))
+        h_butte  = round(avg_h_butte.get(om, 0))
+        px       = round(avg_px.get(om, 0))
+        os_      = round(avg_os.get(om, 0))
+        red_mesa = round(avg_rm.get(om, 0))
+        steele_a = round(avg_sa.get(om, 0))
+        uamps    = round(avg_uamps.get(om, 0))
+        supply   = nebo + h_butte + px + os_ + red_mesa + steele_a + uamps
+        if load is not None:
+            raw      = max(0, load - supply)
+            intgen   = min(raw, 21000)
+            shortage = raw - intgen
+            surplus  = max(0, supply + intgen - load)
+            daily_shortage_kw += shortage
+        else:
+            intgen = shortage = surplus = 0
+        hourly.append({
+            "hour": om, "temp_f": temp, "load": round(load) if load is not None else None,
+            "nebo": nebo, "h_butte": h_butte, "px": px, "os": os_,
+            "red_mesa": red_mesa, "steele_a": steele_a, "uamps": uamps,
+            "internal_gen": intgen,
+            "total_supply": supply + intgen, "shortage": shortage, "surplus": surplus,
+        })
+
+    loads  = [h["load"] for h in hourly if h["load"] is not None]
+    peak_h = max(hourly, key=lambda h: h["load"] or 0)
+    label  = f"{_cal.day_name[dt.weekday()]}, {_cal.month_name[month]} {dt.day}, {year}"
+
+    return {
+        "date": target_date, "label": label, "type": data_type,
+        "hourly": hourly,
+        "summary": {
+            "avg_load":             round(sum(loads) / len(loads)) if loads else 0,
+            "peak_load":            peak_h["load"],
+            "peak_hour":            peak_h["hour"],
+            "daily_shortage_mwh":   round(daily_shortage_kw / 1000, 1),
+        },
+    }
+
+
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

@@ -304,6 +304,7 @@
     <button class="tab-btn"        id="tab-btn-wind-horse-butte" onclick="switchTab('wind-horse-butte')">Horse Butte Wind</button>
     <button class="tab-btn"        id="tab-btn-supply"          onclick="switchTab('supply')">Supply Portfolio</button>
     <button class="tab-btn"        id="tab-btn-longterm"        onclick="switchTab('longterm')">Long Term</button>
+    <button class="tab-btn"        id="tab-btn-dayplan"         onclick="switchTab('dayplan')">Day Plan</button>
   </div>
 
   <!-- ══════════════════════ TAB 1: FORECAST ══════════════════════ -->
@@ -652,6 +653,52 @@
     </div>
   </div>
 
+  <!-- ══════════════════════ TAB 9: DAY PLAN ══════════════════════ -->
+  <div id="tab-dayplan" class="hidden">
+    <div class="controls">
+      <div class="field">
+        <label for="dp-date">Date</label>
+        <input type="date" id="dp-date" style="padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem">
+      </div>
+      <button class="btn-primary" onclick="runDayPlan()">Run Forecast</button>
+      <span id="dp-status" style="font-size:.82rem;color:#718096;display:none"></span>
+    </div>
+
+    <div id="dp-results" class="hidden">
+      <div class="cards">
+        <div class="card"><div class="card-label">Peak Load</div><div class="card-value" id="dp-peak-load">—<span class="card-unit"> kW</span></div></div>
+        <div class="card"><div class="card-label">Avg Load</div><div class="card-value" id="dp-avg-load">—<span class="card-unit"> kW</span></div></div>
+        <div class="card"><div class="card-label">Daily Shortage</div><div class="card-value" id="dp-shortage">—<span class="card-unit"> MWh</span></div></div>
+        <div class="card hour"><div class="card-label">Peak Hour</div><div class="card-value" id="dp-peak-hour">—</div></div>
+      </div>
+
+      <div class="chart-wrap" style="margin-top:1rem;overflow-x:auto">
+        <div class="chart-title" id="dp-table-title">Hourly Load &amp; Supply</div>
+        <table id="dp-table" style="width:100%;border-collapse:collapse;font-size:.8rem;font-variant-numeric:tabular-nums;min-width:820px">
+          <thead>
+            <tr style="background:#f7fafc;border-bottom:2px solid #e2e8f0">
+              <th style="padding:6px 8px;text-align:center;font-weight:600;color:#718096;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em">Hr</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#718096;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em">Temp °F</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#4a5568;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;border-left:2px solid #e2e8f0">Load</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#718096;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;border-left:1px solid #e2e8f0">Nebo</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#718096;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em">H.Butte</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#718096;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em">PX</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#718096;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em">OS</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#718096;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em">Red Mesa</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#718096;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em">Steele A</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#718096;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em">UAMPS</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#744210;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;border-left:1px solid #e2e8f0">Int.Gen</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#2b6cb0;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em">Total Sup</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#276749;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;border-left:1px solid #e2e8f0">Surplus</th>
+              <th style="padding:6px 8px;text-align:right;font-weight:600;color:#c53030;font-size:.72rem;text-transform:uppercase;letter-spacing:.04em">Shortage</th>
+            </tr>
+          </thead>
+          <tbody id="dp-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <script>
@@ -673,12 +720,15 @@
     document.getElementById("solar-steele-a-date").value    = todayStr;
     document.getElementById("wind-horse-butte-date").value  = todayStr;
     document.getElementById("supply-date").value            = todayStr;
+    // Default Day Plan to this Sunday (July 19, 2026) or 3 days ahead
+    const dpDefault = new Date(today); dpDefault.setDate(today.getDate() + 3);
+    document.getElementById("dp-date").value = dpDefault.toISOString().slice(0, 10);
   } catch(e) { console.error("Init date error:", e); }
 
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "longterm"].forEach(t => {
+    ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "longterm", "dayplan"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -1807,6 +1857,72 @@
         },
       },
     });
+  }
+
+  // ── Day Plan ──────────────────────────────────────────────────────────
+
+  async function runDayPlan() {
+    const dateVal = document.getElementById("dp-date").value;
+    if (!dateVal) return;
+    const status = document.getElementById("dp-status");
+    status.textContent = "Loading…"; status.style.display = "inline";
+    document.getElementById("dp-results").classList.add("hidden");
+    try {
+      const res  = await fetch(`/api/dayplan?date=${dateVal}`);
+      const data = await res.json();
+      if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
+      renderDayPlan(data);
+      status.style.display = "none";
+    } catch(e) {
+      status.textContent = "Request failed.";
+    }
+  }
+
+  function renderDayPlan(data) {
+    const s = data.summary;
+    document.getElementById("dp-table-title").textContent = `${data.label} — Hourly Load & Supply (${data.type})`;
+    document.getElementById("dp-peak-load").innerHTML  = `${(s.peak_load||0).toLocaleString()}<span class="card-unit"> kW</span>`;
+    document.getElementById("dp-avg-load").innerHTML   = `${(s.avg_load||0).toLocaleString()}<span class="card-unit"> kW</span>`;
+    document.getElementById("dp-shortage").innerHTML   = `${s.daily_shortage_mwh}<span class="card-unit"> MWh</span>`;
+    document.getElementById("dp-peak-hour").textContent = s.peak_hour != null ? fmt12(s.peak_hour) : "—";
+
+    const tbody = document.getElementById("dp-tbody");
+    tbody.innerHTML = "";
+    const fmtN = n => n > 0 ? n.toLocaleString() : "—";
+    data.hourly.forEach(h => {
+      const isShort  = h.shortage > 0;
+      const isSurp   = h.surplus  > 0;
+      const rowStyle = isShort
+        ? "background:#fff5f5"
+        : isSurp ? "background:#f0fff4" : "";
+      const shortStyle = isShort ? "color:#c53030;font-weight:700" : "color:#a0aec0";
+      const surpStyle  = isSurp  ? "color:#276749;font-weight:600" : "color:#a0aec0";
+      const loadStyle  = "font-weight:700";
+      const intStyle   = h.internal_gen > 0 ? "color:#744210;font-weight:600" : "color:#a0aec0";
+      const totalStyle = "color:#2b6cb0;font-weight:600";
+      const td = (val, style="", extra="") =>
+        `<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #f0f0f0;${style}"${extra}>${val}</td>`;
+      const tdc = (val, style="", extra="") =>
+        `<td style="padding:5px 8px;text-align:right;border-bottom:1px solid #f0f0f0;border-left:1px solid #e2e8f0;${style}"${extra}>${val}</td>`;
+      tbody.insertAdjacentHTML("beforeend", `<tr style="${rowStyle}">
+        <td style="padding:5px 8px;text-align:center;font-weight:600;color:#718096;font-size:.8rem;border-bottom:1px solid #f0f0f0">${h.hour+1}</td>
+        ${td(h.temp_f != null ? h.temp_f+"°" : "—", "color:#718096")}
+        ${tdc(h.load != null ? h.load.toLocaleString() : "—", loadStyle)}
+        ${tdc(fmtN(h.nebo), "color:#4a5568")}
+        ${td(fmtN(h.h_butte), "color:#4a5568")}
+        ${td(fmtN(h.px), "color:#4a5568")}
+        ${td(fmtN(h.os), "color:#4a5568")}
+        ${td(fmtN(h.red_mesa), "color:#4a5568")}
+        ${td(fmtN(h.steele_a), "color:#4a5568")}
+        ${td(fmtN(h.uamps), "color:#4a5568")}
+        ${tdc(fmtN(h.internal_gen), intStyle)}
+        ${td(fmtN(h.total_supply), totalStyle)}
+        ${tdc(isSurp ? h.surplus.toLocaleString() : "—", surpStyle)}
+        ${td(isShort ? h.shortage.toLocaleString() : "—", shortStyle)}
+      </tr>`);
+    });
+
+    document.getElementById("dp-results").classList.remove("hidden");
   }
 
   // ── Init ──────────────────────────────────────────────────────────────
