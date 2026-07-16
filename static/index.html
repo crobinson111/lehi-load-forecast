@@ -1741,7 +1741,7 @@
     document.getElementById("lt-peak-hour").textContent  = fmt12(s.peak_hour);
     document.getElementById("lt-results").classList.remove("hidden");
 
-    const labels   = data.hourly.map(h => fmt12(h.hour));
+    const labels   = data.hourly.map(h => h.hour + 1);
     const loadData = data.hourly.map(h => h.load);
 
     // Stacked bar chart
