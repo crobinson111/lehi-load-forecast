@@ -1988,6 +1988,26 @@ async def longterm_forecast(
                         os_by_hour[om] += os_kw
             avg_px = px_by_hour
             avg_os = os_by_hour
+        # Nebo: override historical average with future_schedule value if provided
+        if "nebo" in fs.columns:
+            nebo_has = fs_match["nebo"].apply(pd.to_numeric, errors="coerce").notna().any()
+            if not fs_match.empty and nebo_has:
+                nebo_by_hour = {om: avg_nebo.get(om, 0) for om in range(24)}
+                for _, row in fs_match.iterrows():
+                    hr_str = str(row["hr"]).strip()
+                    if "-" in hr_str:
+                        parts = hr_str.split("-")
+                        hr_start, hr_end = int(parts[0]), int(parts[1])
+                    else:
+                        hr_start = hr_end = int(hr_str)
+                    nebo_mw = pd.to_numeric(row["nebo"], errors="coerce")
+                    if pd.notna(nebo_mw):
+                        nebo_kw = float(nebo_mw) * 1000
+                        for hr in range(hr_start, hr_end + 1):
+                            om = hr - 1
+                            if 0 <= om <= 23:
+                                nebo_by_hour[om] = nebo_kw
+                avg_nebo = nebo_by_hour
     if not avg_px:
         same_month_dates = sup_df[sup_df["date"].astype(str).str.contains(month_str)]["date"].astype(str)
         ref_date = same_month_dates.max() if not same_month_dates.empty else sup_df["date"].astype(str).max()
