@@ -2011,8 +2011,17 @@ async def longterm_forecast(
         df["kwh"]  = pd.to_numeric(df["kwh"], errors="coerce").fillna(0)
         return df[["date", "hr", "kwh"]]
 
-    avg_rm = _avg_by_hr(_load_solar_csv("red_mesa_history.csv",  "RED_MESA_CSV_URL"),  "kwh")
-    avg_sa = _avg_by_hr(_load_solar_csv("steele_a_history.csv",  "STEELE_A_CSV_URL"),  "kwh")
+    def _operational_only(df: pd.DataFrame) -> pd.DataFrame:
+        """Drop rows before the plant's first non-zero production date."""
+        df = df.copy()
+        df["kwh"] = pd.to_numeric(df["kwh"], errors="coerce").fillna(0)
+        active = df[df["kwh"] > 0]
+        if active.empty:
+            return df
+        return df[df["date"].astype(str) >= active["date"].astype(str).min()]
+
+    avg_rm = _avg_by_hr(_operational_only(_load_solar_csv("red_mesa_history.csv",  "RED_MESA_CSV_URL")),  "kwh")
+    avg_sa = _avg_by_hr(_operational_only(_load_solar_csv("steele_a_history.csv",  "STEELE_A_CSV_URL")),  "kwh")
 
     # UAMPS (no historical Aug data — use all available, averaged by hour)
     uamps_url = os.environ.get("UAMPS_CSV_URL")
