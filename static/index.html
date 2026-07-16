@@ -633,7 +633,7 @@
       <div class="cards">
         <div class="card"><div class="card-label">Avg Load</div><div class="card-value" id="lt-avg-load">—<span class="card-unit"> kW</span></div></div>
         <div class="card"><div class="card-label">Avg Supply</div><div class="card-value" id="lt-avg-supply">—<span class="card-unit"> kW</span></div></div>
-        <div class="card"><div class="card-label">Remaining Shortage</div><div class="card-value" id="lt-avg-shortage">—<span class="card-unit"> kW</span></div></div>
+        <div class="card"><div class="card-label">Avg Daily Shortage</div><div class="card-value" id="lt-avg-shortage">—<span class="card-unit"> MWh/day</span></div></div>
         <div class="card"><div class="card-label">Peak Load</div><div class="card-value" id="lt-peak-load">—<span class="card-unit"> kW</span></div></div>
         <div class="card hour"><div class="card-label">Peak Hour</div><div class="card-value" id="lt-peak-hour">—</div></div>
       </div>
@@ -1736,7 +1736,7 @@
     document.getElementById("lt-chart-title").textContent = `Hourly Avg Load vs Supply — ${data.label}`;
     document.getElementById("lt-avg-load").innerHTML     = `${s.avg_load.toLocaleString()}<span class="card-unit"> kW</span>`;
     document.getElementById("lt-avg-supply").innerHTML   = `${s.avg_supply.toLocaleString()}<span class="card-unit"> kW</span>`;
-    document.getElementById("lt-avg-shortage").innerHTML = `${s.avg_shortage.toLocaleString()}<span class="card-unit"> kW</span>`;
+    document.getElementById("lt-avg-shortage").innerHTML = `${s.avg_daily_shortage_mwh.toLocaleString()}<span class="card-unit"> MWh/day</span>`;
     document.getElementById("lt-peak-load").innerHTML    = `${s.peak_load.toLocaleString()}<span class="card-unit"> kW</span>`;
     document.getElementById("lt-peak-hour").textContent  = fmt12(s.peak_hour);
     document.getElementById("lt-results").classList.remove("hidden");

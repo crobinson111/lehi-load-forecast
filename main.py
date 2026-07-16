@@ -1882,41 +1882,57 @@ async def longterm_forecast(
                     "apparent_f": float(row["apparent_f"]),
                 }
 
-    temp_accum: dict = {}
+    # Group by (day-of-month, hour) for per-day historical averages
+    temp_by_dom: dict = {}   # {dom: {om_hour: {temp_f:[], apparent_f:[]}}}
+    temp_monthly: dict = {}  # {om_hour: {temp_f:[], apparent_f:[]}} — monthly fallback
     for d_str, hours in weather_data.items():
         if month_str not in d_str:
             continue
+        try:
+            dom = int(d_str[8:10])
+        except (ValueError, IndexError):
+            continue
         for om_hour, wx in hours.items():
-            if om_hour not in temp_accum:
-                temp_accum[om_hour] = {"temp_f": [], "apparent_f": []}
-            temp_accum[om_hour]["temp_f"].append(wx["temp_f"])
-            temp_accum[om_hour]["apparent_f"].append(wx["apparent_f"])
+            temp_by_dom.setdefault(dom, {}).setdefault(om_hour, {"temp_f": [], "apparent_f": []})["temp_f"].append(wx["temp_f"])
+            temp_by_dom[dom][om_hour]["apparent_f"].append(wx["apparent_f"])
+            temp_monthly.setdefault(om_hour, {"temp_f": [], "apparent_f": []})["temp_f"].append(wx["temp_f"])
+            temp_monthly[om_hour]["apparent_f"].append(wx["apparent_f"])
 
-    if not temp_accum:
+    if not temp_monthly:
         raise HTTPException(status_code=404, detail=f"No historical weather data for month {month}. Run this for a month that appears in past years.")
 
-    avg_temps = {
+    monthly_avg_temps = {
         om: {"temp_f": sum(v["temp_f"]) / len(v["temp_f"]),
              "apparent_f": sum(v["apparent_f"]) / len(v["apparent_f"])}
-        for om, v in temp_accum.items()
+        for om, v in temp_monthly.items()
+    }
+    dom_avg_temps = {
+        dom: {om: {"temp_f": sum(v["temp_f"]) / len(v["temp_f"]),
+                   "apparent_f": sum(v["apparent_f"]) / len(v["apparent_f"])}
+              for om, v in hrs.items()}
+        for dom, hrs in temp_by_dom.items()
     }
 
-    # ── 2. Predict load for each day × hour, average by hour ─────────────
+    # ── 2. Predict load for each day × hour ──────────────────────────────
     _, days_in_month = _cal.monthrange(year, month)
     month_days = [date(year, month, d) for d in range(1, days_in_month + 1)]
 
-    hour_loads: dict = {om: [] for om in range(24)}
+    day_hour_loads: list = []   # list of {om_hour: load_kw} per calendar day
+    hour_loads: dict = {om: [] for om in range(24)}   # for bar chart averages
     for day in month_days:
         date_str = day.isoformat()
+        dom_temps = dom_avg_temps.get(day.day, monthly_avg_temps)
+        d_loads: dict = {}
         for om_hour in range(24):
-            if om_hour not in avg_temps:
+            wx = dom_temps.get(om_hour) or monthly_avg_temps.get(om_hour)
+            if wx is None:
                 continue
-            wx = avg_temps[om_hour]
-            hr = om_hour + 1
             pred = float(max(mdl.predict(
-                build_features(hr, wx["temp_f"], wx["apparent_f"], date_str)
+                build_features(om_hour + 1, wx["temp_f"], wx["apparent_f"], date_str)
             )[0], 0))
+            d_loads[om_hour] = pred
             hour_loads[om_hour].append(pred)
+        day_hour_loads.append(d_loads)
 
     # ── 3. Historical avg supply for this calendar month ─────────────────
     def _avg_by_hr(df: pd.DataFrame, val_col: str) -> dict:
@@ -2010,7 +2026,7 @@ async def longterm_forecast(
     u_df["uamps"] = u_df["crsp"] + u_df["provo_riv"] + u_df["veyo"]
     avg_uamps = u_df.groupby("om_hour")["uamps"].mean().to_dict()
 
-    # ── 4. Build hourly result ────────────────────────────────────────────
+    # ── 4. Build hourly averages for bar chart ────────────────────────────
     month_name = _cal.month_name[month]
     hourly = []
     for om in range(24):
@@ -2034,9 +2050,27 @@ async def longterm_forecast(
             "total_supply": supply + internal_gen, "shortage": shortage,
         })
 
-    avg_load     = round(sum(h["load"]     for h in hourly) / 24)
-    avg_supply   = round(sum(h["total_supply"] for h in hourly) / 24)
-    avg_shortage = round(sum(h["shortage"] for h in hourly) / 24)
+    # ── 5. Per-day shortage sums → average across month ───────────────────
+    # Sum shortage per hour for each actual day (zeroed per hour, no cross-hour netting),
+    # then average the daily totals. This is the operationally correct shortage metric.
+    supply_by_hr = {
+        om: (round(avg_nebo.get(om, 0)) + round(avg_h_butte.get(om, 0)) +
+             round(avg_px.get(om, 0))   + round(avg_os.get(om, 0)) +
+             round(avg_rm.get(om, 0))   + round(avg_sa.get(om, 0)) +
+             round(avg_uamps.get(om, 0)))
+        for om in range(24)
+    }
+    daily_shortages_kwh: list = []
+    for d in day_hour_loads:
+        day_total = 0.0
+        for om in range(24):
+            raw = max(0.0, d.get(om, 0.0) - supply_by_hr[om])
+            day_total += raw - min(raw, 21000.0)
+        daily_shortages_kwh.append(day_total)
+    avg_daily_shortage_mwh = round(sum(daily_shortages_kwh) / len(daily_shortages_kwh) / 1000, 1) if daily_shortages_kwh else 0.0
+
+    avg_load   = round(sum(h["load"]         for h in hourly) / 24)
+    avg_supply = round(sum(h["total_supply"] for h in hourly) / 24)
     peak_h = max(hourly, key=lambda h: h["load"])
 
     pie = {k: round(sum(h[k] for h in hourly)) for k in
@@ -2048,7 +2082,7 @@ async def longterm_forecast(
         "hourly": hourly,
         "summary": {
             "avg_load": avg_load, "avg_supply": avg_supply,
-            "avg_shortage": avg_shortage,
+            "avg_daily_shortage_mwh": avg_daily_shortage_mwh,
             "peak_load": peak_h["load"], "peak_hour": peak_h["hour"],
         },
         "pie": pie,
