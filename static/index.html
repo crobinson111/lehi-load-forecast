@@ -638,6 +638,7 @@
         <div class="card"><div class="card-label">Peak Load</div><div class="card-value" id="lt-peak-load">—<span class="card-unit"> kW</span></div></div>
         <div class="card hour"><div class="card-label">Peak Hour</div><div class="card-value" id="lt-peak-hour">—</div></div>
       </div>
+      <div id="lt-bias-note" style="display:none; font-size:.8rem; color:#2d4a1e; background:#f0fff4; border:1px solid #68d391; border-radius:4px; padding:.25rem .7rem; margin-top:.5rem; width:fit-content;"></div>
 
       <!-- 24-hour stacked chart -->
       <div class="chart-wrap">
@@ -1789,6 +1790,19 @@
     document.getElementById("lt-avg-shortage").innerHTML = `${s.avg_daily_shortage_mwh.toLocaleString()}<span class="card-unit"> MWh/day</span>`;
     document.getElementById("lt-peak-load").innerHTML    = `${s.peak_load.toLocaleString()}<span class="card-unit"> kW</span>`;
     document.getElementById("lt-peak-hour").textContent  = fmt12(s.peak_hour);
+    const biasNote = document.getElementById("lt-bias-note");
+    if (biasNote) {
+      const scale = data.bias_scale || 1.0;
+      const months = data.bias_months || 0;
+      if (scale !== 1.0 && months > 0) {
+        const pct = ((scale - 1) * 100).toFixed(1);
+        const sign = scale > 1 ? "+" : "";
+        biasNote.textContent = `Growth correction applied: ${sign}${pct}% (based on ${months} recent month${months > 1 ? "s" : ""} of actuals)`;
+        biasNote.style.display = "block";
+      } else {
+        biasNote.style.display = "none";
+      }
+    }
     document.getElementById("lt-results").classList.remove("hidden");
 
     const labels   = data.hourly.map(h => h.hour + 1);
