@@ -1792,12 +1792,18 @@
     document.getElementById("lt-peak-hour").textContent  = fmt12(s.peak_hour);
     const biasNote = document.getElementById("lt-bias-note");
     if (biasNote) {
-      const scale = data.bias_scale || 1.0;
-      const months = data.bias_months || 0;
-      if (scale !== 1.0 && months > 0) {
-        const pct = ((scale - 1) * 100).toFixed(1);
-        const sign = scale > 1 ? "+" : "";
-        biasNote.textContent = `Growth correction applied: ${sign}${pct}% (based on ${months} recent month${months > 1 ? "s" : ""} of actuals)`;
+      const growth = data.yoy_growth;
+      const days = data.yoy_days || 0;
+      if (growth && growth !== 1.0 && days > 0) {
+        const pct = ((growth - 1) * 100).toFixed(1);
+        const sign = growth > 1 ? "+" : "";
+        biasNote.textContent = `Year-over-year growth applied: ${sign}${pct}% (${days} matched day${days > 1 ? "s" : ""} of same-hour actuals)`;
+        biasNote.style.display = "block";
+      } else if (growth === null || growth === undefined) {
+        biasNote.textContent = "No prior-year actuals found — using model-based forecast";
+        biasNote.style.color = "#744210";
+        biasNote.style.background = "#fefcbf";
+        biasNote.style.borderColor = "#f6e05e";
         biasNote.style.display = "block";
       } else {
         biasNote.style.display = "none";

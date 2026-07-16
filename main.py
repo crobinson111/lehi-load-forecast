@@ -1913,106 +1913,100 @@ async def longterm_forecast(
         for dom, hrs in temp_by_dom.items()
     }
 
-    # ── 1b. Recency bias correction ───────────────────────────────────────────
-    # For the 3 most recent complete months, predict load using the same
-    # averaged-temp method and compare vs actuals. The ratio captures both
-    # year_trend underestimation and temperature-smoothing bias so the longterm
-    # forecast stays anchored to current load levels as the city grows.
-    def _month_bias_ratio(yr: int, mo: int) -> float | None:
-        mo_str_inner = f"-{mo:02d}-"
-        mo_temp_monthly: dict = {}
-        mo_temp_by_dom: dict = {}
-        for d_str_wx, hours_wx in weather_data.items():
-            if mo_str_inner not in d_str_wx:
+    # ── 1b. Year-over-year growth factor ─────────────────────────────────────
+    # Collect prior-year same-month actuals (used as forecast base when available).
+    # Compute YoY growth by comparing same calendar day + same hour across years.
+    # Start with the same calendar month; step back one month at a time until we
+    # have at least 14 matched days so weather anomalies don't dominate the ratio.
+    history = model_state["history"]
+    prior_year = year - 1
+
+    prior_month_daily: dict = {}   # {dom: {om_hour: load}} for prior year same month
+    prior_month_str_exact = f"{prior_year}-{month:02d}-"
+    for d_str, day_data in history.items():
+        if not d_str.startswith(prior_month_str_exact):
+            continue
+        try:
+            dom = int(d_str[8:10])
+        except (ValueError, IndexError):
+            continue
+        prior_month_daily[dom] = day_data
+
+    yoy_num = 0.0    # sum of current-year actuals for matched day+hour pairs
+    yoy_den = 0.0    # sum of prior-year actuals for the same pairs
+    yoy_days = 0
+    for mo_offset in range(0, 6):
+        chk_mo = month - mo_offset
+        chk_yr = year
+        while chk_mo <= 0:
+            chk_mo += 12
+            chk_yr -= 1
+        prior_chk_yr = chk_yr - 1
+        chk_mo_str = f"-{chk_mo:02d}-"
+        for d_str, curr_day in history.items():
+            if not d_str.startswith(str(chk_yr)):
+                continue
+            if chk_mo_str not in d_str:
                 continue
             try:
-                dom_wx = int(d_str_wx[8:10])
+                dom = int(d_str[8:10])
             except (ValueError, IndexError):
                 continue
-            for oh, wx in hours_wx.items():
-                mo_temp_monthly.setdefault(oh, {"temp_f": [], "apparent_f": []})
-                mo_temp_monthly[oh]["temp_f"].append(wx["temp_f"])
-                mo_temp_monthly[oh]["apparent_f"].append(wx["apparent_f"])
-                mo_temp_by_dom.setdefault(dom_wx, {}).setdefault(oh, {"temp_f": [], "apparent_f": []})
-                mo_temp_by_dom[dom_wx][oh]["temp_f"].append(wx["temp_f"])
-                mo_temp_by_dom[dom_wx][oh]["apparent_f"].append(wx["apparent_f"])
-        if not mo_temp_monthly:
-            return None
-        mo_avg = {oh: {"temp_f": sum(v["temp_f"]) / len(v["temp_f"]),
-                       "apparent_f": sum(v["apparent_f"]) / len(v["apparent_f"])}
-                  for oh, v in mo_temp_monthly.items()}
-        mo_dom_avg = {
-            dom: {oh: {"temp_f": sum(v["temp_f"]) / len(v["temp_f"]),
-                       "apparent_f": sum(v["apparent_f"]) / len(v["apparent_f"])}
-                  for oh, v in hrs.items()}
-            for dom, hrs in mo_temp_by_dom.items()
-        }
-        _, days_in_mo = _cal.monthrange(yr, mo)
-        total_pred = 0.0
-        total_actual = 0.0
-        days_counted = 0
-        for day_d in [date(yr, mo, d) for d in range(1, days_in_mo + 1)]:
-            d_str_ref = day_d.isoformat()
-            if d_str_ref not in model_state["history"]:
+            prior_d = f"{prior_chk_yr}-{chk_mo:02d}-{dom:02d}"
+            if prior_d not in history:
                 continue
-            actual_day = model_state["history"][d_str_ref]
-            dom_t = mo_dom_avg.get(day_d.day, mo_avg)
+            prior_day = history[prior_d]
             for oh in range(24):
-                wx = dom_t.get(oh) or mo_avg.get(oh)
-                if wx is None:
-                    continue
-                pred = float(max(mdl.predict(
-                    build_features(oh + 1, wx["temp_f"], wx["apparent_f"], d_str_ref)
-                )[0], 0))
-                total_pred += pred
-                total_actual += actual_day.get(oh, 0.0)
-            days_counted += 1
-        if days_counted < 20 or total_pred == 0:
-            return None
-        return total_actual / total_pred
-
-    ref_ratios: list = []
-    _check_d = date.today().replace(day=1) - timedelta(days=1)
-    for _ in range(6):
-        ratio = _month_bias_ratio(_check_d.year, _check_d.month)
-        if ratio is not None:
-            ref_ratios.append(ratio)
-        if len(ref_ratios) >= 3:
+                c = curr_day.get(oh)
+                p = prior_day.get(oh)
+                if c is not None and p is not None and p > 0:
+                    yoy_num += c
+                    yoy_den += p
+            yoy_days += 1
+        if yoy_days >= 14:
             break
-        _check_d = _check_d.replace(day=1) - timedelta(days=1)
 
-    if ref_ratios:
-        raw_scale = sum(ref_ratios) / len(ref_ratios)
-        lt_scale = round(max(0.85, min(1.35, raw_scale)), 4)
+    if yoy_den > 0 and yoy_days >= 7:
+        yoy_growth: float | None = round(max(0.85, min(1.35, yoy_num / yoy_den)), 4)
     else:
-        lt_scale = 1.0
+        yoy_growth = None
 
     # ── 2. Predict load for each day × hour ──────────────────────────────
     _, days_in_month = _cal.monthrange(year, month)
     month_days = [date(year, month, d) for d in range(1, days_in_month + 1)]
 
-    day_hour_loads: list = []   # list of {om_hour: load_kw} per calendar day
-    hour_loads: dict = {om: [] for om in range(24)}   # for bar chart averages
-    for day in month_days:
-        date_str = day.isoformat()
-        dom_temps = dom_avg_temps.get(day.day, monthly_avg_temps)
-        d_loads: dict = {}
-        for om_hour in range(24):
-            wx = dom_temps.get(om_hour) or monthly_avg_temps.get(om_hour)
-            if wx is None:
-                continue
-            pred = float(max(mdl.predict(
-                build_features(om_hour + 1, wx["temp_f"], wx["apparent_f"], date_str)
-            )[0], 0))
-            d_loads[om_hour] = pred
-            hour_loads[om_hour].append(pred)
-        day_hour_loads.append(d_loads)
+    day_hour_loads: list = []
+    hour_loads: dict = {om: [] for om in range(24)}
 
-    # Apply recency bias correction to all predicted loads
-    if lt_scale != 1.0:
-        day_hour_loads = [{oh: v * lt_scale for oh, v in d.items()} for d in day_hour_loads]
-        for oh in hour_loads:
-            hour_loads[oh] = [v * lt_scale for v in hour_loads[oh]]
+    if prior_month_daily and yoy_growth is not None:
+        # Primary path: scale prior-year same-month actuals by the YoY growth
+        # factor. Preserves the real seasonal load shape; only stretches magnitude.
+        prior_vals = list(prior_month_daily.values())
+        for day in month_days:
+            base = prior_month_daily.get(day.day)
+            if base is None:
+                base = {oh: sum(v.get(oh, 0.0) for v in prior_vals) / len(prior_vals)
+                        for oh in range(24)}
+            d_loads = {oh: v * yoy_growth for oh, v in base.items() if v is not None}
+            day_hour_loads.append(d_loads)
+            for oh, v in d_loads.items():
+                hour_loads[oh].append(v)
+    else:
+        # Fallback: model-based prediction using averaged historical temperatures
+        for day in month_days:
+            date_str = day.isoformat()
+            dom_temps = dom_avg_temps.get(day.day, monthly_avg_temps)
+            d_loads: dict = {}
+            for om_hour in range(24):
+                wx = dom_temps.get(om_hour) or monthly_avg_temps.get(om_hour)
+                if wx is None:
+                    continue
+                pred = float(max(mdl.predict(
+                    build_features(om_hour + 1, wx["temp_f"], wx["apparent_f"], date_str)
+                )[0], 0))
+                d_loads[om_hour] = pred
+                hour_loads[om_hour].append(pred)
+            day_hour_loads.append(d_loads)
 
     # ── 3. Historical avg supply for this calendar month ─────────────────
     def _avg_by_hr(df: pd.DataFrame, val_col: str) -> dict:
@@ -2195,8 +2189,8 @@ async def longterm_forecast(
             "peak_load": peak_h["load"], "peak_hour": peak_h["hour"],
         },
         "pie": pie,
-        "bias_scale": lt_scale,
-        "bias_months": len(ref_ratios),
+        "yoy_growth": yoy_growth,
+        "yoy_days": yoy_days,
     }
 
 
