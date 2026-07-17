@@ -627,6 +627,7 @@
       </div>
       <button class="btn-primary" onclick="runLongterm()">Run Forecast</button>
       <span id="lt-status" style="font-size:.82rem;color:#718096;display:none"></span>
+      <span id="lt-blended-cost" style="display:none; font-size:.82rem; font-weight:600; color:#2b6cb0; background:#ebf8ff; border:1px solid #90cdf4; border-radius:4px; padding:.25rem .65rem;"></span>
     </div>
 
     <div id="lt-results" class="hidden">
@@ -1790,6 +1791,15 @@
     document.getElementById("lt-avg-shortage").innerHTML = `${s.avg_daily_shortage_mwh.toLocaleString()}<span class="card-unit"> MWh/day</span>`;
     document.getElementById("lt-peak-load").innerHTML    = `${s.peak_load.toLocaleString()}<span class="card-unit"> kW</span>`;
     document.getElementById("lt-peak-hour").textContent  = fmt12(s.peak_hour);
+    const blendedEl = document.getElementById("lt-blended-cost");
+    if (blendedEl) {
+      if (data.blended_cost_per_mwh != null) {
+        blendedEl.textContent = `Blended Cost: $${data.blended_cost_per_mwh.toFixed(2)}/MWh`;
+        blendedEl.style.display = "inline";
+      } else {
+        blendedEl.style.display = "none";
+      }
+    }
     const biasNote = document.getElementById("lt-bias-note");
     if (biasNote) {
       const growth = data.yoy_growth;

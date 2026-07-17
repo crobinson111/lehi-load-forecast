@@ -2127,7 +2127,10 @@ async def longterm_forecast(
         u_df[col] = pd.to_numeric(u_df[col], errors="coerce").fillna(0)
     u_df["om_hour"] = u_df["hr"].astype(int) - 1
     u_df["uamps"] = u_df["crsp"] + u_df["provo_riv"] + u_df["veyo"]
-    avg_uamps = u_df.groupby("om_hour")["uamps"].mean().to_dict()
+    avg_uamps    = u_df.groupby("om_hour")["uamps"].mean().to_dict()
+    avg_crsp_hr  = u_df.groupby("om_hour")["crsp"].mean().to_dict()
+    avg_provo_hr = u_df.groupby("om_hour")["provo_riv"].mean().to_dict()
+    avg_veyo_hr  = u_df.groupby("om_hour")["veyo"].mean().to_dict()
 
     # ── 4. Build hourly averages for bar chart ────────────────────────────
     month_name = _cal.month_name[month]
@@ -2179,6 +2182,46 @@ async def longterm_forecast(
     pie = {k: round(sum(h[k] for h in hourly)) for k in
            ["nebo", "h_butte", "px", "os", "red_mesa", "steele_a", "uamps", "internal_gen", "shortage"]}
 
+    # ── 6. Blended resource cost ──────────────────────────────────────────
+    blended_cost_per_mwh = None
+    costs_path = os.path.join(_BASE_DIR, "data", "resource_costs.csv")
+    if os.path.exists(costs_path):
+        try:
+            c_df = pd.read_csv(costs_path)
+            c_df["month"] = pd.to_numeric(c_df["month"], errors="coerce")
+
+            def _res_cost(res: str) -> float:
+                mo_row = c_df[(c_df["resource"] == res) & (c_df["month"] == month)]
+                if not mo_row.empty:
+                    return float(mo_row["cost_per_mwh"].iloc[0])
+                any_row = c_df[(c_df["resource"] == res) & c_df["month"].isna()]
+                if not any_row.empty:
+                    return float(any_row["cost_per_mwh"].iloc[0])
+                return 0.0
+
+            total_cost  = 0.0
+            total_mwh   = 0.0
+            for om, h in enumerate(hourly):
+                for res, kw in [
+                    ("nebo",      h["nebo"]),
+                    ("h_butte",   h["h_butte"]),
+                    ("red_mesa",  h["red_mesa"]),
+                    ("steele_a",  h["steele_a"]),
+                    ("px",        h["px"]),
+                    ("os",        h["os"]),
+                    ("shortage",  h["shortage"]),
+                    ("crsp",      avg_crsp_hr.get(om, 0.0)),
+                    ("provo_riv", avg_provo_hr.get(om, 0.0)),
+                    ("veyo",      avg_veyo_hr.get(om, 0.0)),
+                ]:
+                    mwh = kw * days_in_month / 1000.0
+                    total_cost += mwh * _res_cost(res)
+                    total_mwh  += mwh
+            if total_mwh > 0:
+                blended_cost_per_mwh = round(total_cost / total_mwh, 2)
+        except Exception as _exc:
+            logger.warning(f"Blended cost calculation failed: {_exc}")
+
     return {
         "month": month, "year": year,
         "label": f"{month_name} {year}",
@@ -2191,6 +2234,7 @@ async def longterm_forecast(
         "pie": pie,
         "yoy_growth": yoy_growth,
         "yoy_days": yoy_days,
+        "blended_cost_per_mwh": blended_cost_per_mwh,
     }
 
 
