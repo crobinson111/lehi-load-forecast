@@ -176,9 +176,14 @@ _UAMPS_CACHE_TTL = 1800  # 30 minutes (for today/future dates — live fetch fal
 
 _UAMPS_COLS = {
     # 0-based index after splitting a data line by whitespace
+    # Header: HOUR METERS RESTOTAL DIFF IPP CRSP HNTR SAN_JUAN PROVO_RIV MR OS PX PV_WIND NEBO H_BUTTE VEYO OLMSTED RED_MESA SUNNYSIDE STEEL_A
     "crsp":      5,
+    "hunter":    6,
     "provo_riv": 8,
+    "mr":        9,   # "MR" in log — likely Jordanelle hydro
+    "pv_wind":   12,
     "veyo":      15,
+    "olmsted":   16,
 }
 
 
@@ -241,14 +246,16 @@ def load_uamps_schedule() -> dict:
         df = pd.read_csv(io.StringIO(resp.text))
         df["date"] = df["date"].astype(str)
         df["hr"]   = df["hr"].astype(int)
-        for col in ("crsp", "provo_riv", "veyo"):
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+        _uamps_resource_cols = ("crsp", "hunter", "provo_riv", "mr", "pv_wind", "veyo", "olmsted")
+        for col in _uamps_resource_cols:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+            else:
+                df[col] = 0
         result: dict = {}
         for _, row in df.iterrows():
             result.setdefault(str(row["date"]), {})[int(row["hr"])] = {
-                "crsp":      int(row["crsp"]),
-                "provo_riv": int(row["provo_riv"]),
-                "veyo":      int(row["veyo"]),
+                col: int(row[col]) for col in _uamps_resource_cols
             }
         logger.info(f"Loaded UAMPS schedule: {len(df)} rows ({df['date'].min()} to {df['date'].max()})")
         return result
@@ -2126,11 +2133,14 @@ async def longterm_forecast(
     for col in ["crsp", "provo_riv", "veyo"]:
         u_df[col] = pd.to_numeric(u_df[col], errors="coerce").fillna(0)
     u_df["om_hour"] = u_df["hr"].astype(int) - 1
-    u_df["uamps"] = u_df["crsp"] + u_df["provo_riv"] + u_df["veyo"]
+    _uamps_sub_cols = ["crsp", "hunter", "provo_riv", "mr", "pv_wind", "veyo", "olmsted"]
+    for col in _uamps_sub_cols:
+        if col not in u_df.columns:
+            u_df[col] = 0
+        u_df[col] = pd.to_numeric(u_df[col], errors="coerce").fillna(0)
+    u_df["uamps"] = u_df[_uamps_sub_cols].sum(axis=1)
     avg_uamps    = u_df.groupby("om_hour")["uamps"].mean().to_dict()
-    avg_crsp_hr  = u_df.groupby("om_hour")["crsp"].mean().to_dict()
-    avg_provo_hr = u_df.groupby("om_hour")["provo_riv"].mean().to_dict()
-    avg_veyo_hr  = u_df.groupby("om_hour")["veyo"].mean().to_dict()
+    avg_uamps_sub = {col: u_df.groupby("om_hour")[col].mean().to_dict() for col in _uamps_sub_cols}
 
     # ── 4. Build hourly averages for bar chart ────────────────────────────
     month_name = _cal.month_name[month]
@@ -2202,18 +2212,16 @@ async def longterm_forecast(
             total_cost  = 0.0
             total_mwh   = 0.0
             for om, h in enumerate(hourly):
+                uamps_pairs = [(col, avg_uamps_sub[col].get(om, 0.0)) for col in _uamps_sub_cols]
                 for res, kw in [
-                    ("nebo",      h["nebo"]),
-                    ("h_butte",   h["h_butte"]),
-                    ("red_mesa",  h["red_mesa"]),
-                    ("steele_a",  h["steele_a"]),
-                    ("px",        h["px"]),
-                    ("os",        h["os"]),
-                    ("shortage",  h["shortage"]),
-                    ("crsp",      avg_crsp_hr.get(om, 0.0)),
-                    ("provo_riv", avg_provo_hr.get(om, 0.0)),
-                    ("veyo",      avg_veyo_hr.get(om, 0.0)),
-                ]:
+                    ("nebo",     h["nebo"]),
+                    ("h_butte",  h["h_butte"]),
+                    ("red_mesa", h["red_mesa"]),
+                    ("steele_a", h["steele_a"]),
+                    ("px",       h["px"]),
+                    ("os",       h["os"]),
+                    ("shortage", h["shortage"]),
+                ] + uamps_pairs:
                     mwh = kw * days_in_month / 1000.0
                     total_cost += mwh * _res_cost(res)
                     total_mwh  += mwh
