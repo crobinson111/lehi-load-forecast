@@ -86,14 +86,18 @@ while d <= end:
         if not parts or not parts[0].isdigit():
             continue
         hr = int(parts[0])
-        if hr < 1 or hr > 24 or len(parts) < 16:
+        if hr < 1 or hr > 24 or len(parts) < 17:
             continue
         rows.append({
             "date":      d.isoformat(),
             "hr":        hr,
             "crsp":      int(parts[5]),
+            "hunter":    int(parts[6]),
             "provo_riv": int(parts[8]),
+            "mr":        int(parts[9]),
+            "pv_wind":   int(parts[12]),
             "veyo":      int(parts[15]),
+            "olmsted":   int(parts[16]),
         })
         day_rows += 1
 
@@ -101,6 +105,6 @@ while d <= end:
     d += timedelta(days=1)
     time.sleep(0.4)  # be polite to the server
 
-df = pd.DataFrame(rows, columns=["date", "hr", "crsp", "provo_riv", "veyo"])
+df = pd.DataFrame(rows, columns=["date", "hr", "crsp", "hunter", "provo_riv", "mr", "pv_wind", "veyo", "olmsted"])
 df.to_csv(output, index=False)
 print(f"Wrote {len(df)} rows to {output}  ({df['date'].min()} to {df['date'].max()})")

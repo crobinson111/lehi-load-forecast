@@ -2130,8 +2130,6 @@ async def longterm_forecast(
         u_df = pd.read_csv(_io.StringIO(httpx.get(uamps_url, timeout=30).text))
     else:
         u_df = pd.read_csv(os.path.join(_BASE_DIR, "data", "uamps_schedule.csv"))
-    for col in ["crsp", "provo_riv", "veyo"]:
-        u_df[col] = pd.to_numeric(u_df[col], errors="coerce").fillna(0)
     u_df["om_hour"] = u_df["hr"].astype(int) - 1
     _uamps_sub_cols = ["crsp", "hunter", "provo_riv", "mr", "pv_wind", "veyo", "olmsted"]
     for col in _uamps_sub_cols:
@@ -2398,10 +2396,13 @@ async def day_plan(
         u_df = pd.read_csv(_io.StringIO(httpx.get(uamps_url, timeout=30).text))
     else:
         u_df = pd.read_csv(os.path.join(_BASE_DIR, "data", "uamps_schedule.csv"))
-    for col in ["crsp", "provo_riv", "veyo"]:
-        u_df[col] = pd.to_numeric(u_df[col], errors="coerce").fillna(0)
     u_df["om_hour"] = u_df["hr"].astype(int) - 1
-    u_df["uamps"]   = u_df["crsp"] + u_df["provo_riv"] + u_df["veyo"]
+    _uamps_sub_cols_lt = ["crsp", "hunter", "provo_riv", "mr", "pv_wind", "veyo", "olmsted"]
+    for col in _uamps_sub_cols_lt:
+        if col not in u_df.columns:
+            u_df[col] = 0
+        u_df[col] = pd.to_numeric(u_df[col], errors="coerce").fillna(0)
+    u_df["uamps"] = u_df[_uamps_sub_cols_lt].sum(axis=1)
     avg_uamps = u_df.groupby("om_hour")["uamps"].mean().to_dict()
 
     # ── 3. Build hourly output ─────────────────────────────────────────────
