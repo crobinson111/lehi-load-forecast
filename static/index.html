@@ -820,7 +820,7 @@
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "longterm", "dayplan"].forEach(t => {
+    ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "longterm", "dayplan", "whatif"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
