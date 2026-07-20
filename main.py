@@ -2047,6 +2047,8 @@ async def longterm_forecast(
         # Only use if at least one row has a non-empty PX or OS value
         has_values = fs_match[["px","os"]].apply(pd.to_numeric, errors="coerce").notna().any(axis=None)
         if not fs_match.empty and has_values:
+            mon_sat_count = sum(1 for d in month_days if d.weekday() != 6)
+            mon_sat_scale = mon_sat_count / days_in_month
             px_by_hour = {om: 0.0 for om in range(24)}
             os_by_hour = {om: 0.0 for om in range(24)}
             for _, row in fs_match.iterrows():
@@ -2065,8 +2067,8 @@ async def longterm_forecast(
                 for hr in range(hr_start, hr_end + 1):
                     om = hr - 1
                     if 0 <= om <= 23:
-                        px_by_hour[om] += px_kw
-                        os_by_hour[om] += os_kw
+                        px_by_hour[om] += px_kw * mon_sat_scale
+                        os_by_hour[om] += os_kw * mon_sat_scale
             avg_px = px_by_hour
             avg_os = os_by_hour
         # Nebo: override historical average with future_schedule value if provided
@@ -2329,18 +2331,20 @@ async def day_plan(
         fs_match = fs[(fs["year"].astype(int) == year) & (fs["month"].astype(int) == month)]
         has_values = fs_match[["px","os"]].apply(pd.to_numeric, errors="coerce").notna().any(axis=None)
         if not fs_match.empty and has_values:
+            is_sunday = dt.weekday() == 6
             px_by_hour = {om: 0.0 for om in range(24)}
             os_by_hour = {om: 0.0 for om in range(24)}
-            for _, row in fs_match.iterrows():
-                hr_str = str(row["hr"]).strip()
-                s, e = (int(hr_str.split("-")[0]), int(hr_str.split("-")[1])) if "-" in hr_str else (int(hr_str), int(hr_str))
-                px_kw = float(pd.to_numeric(row["px"], errors="coerce") or 0) * 1000
-                os_kw = float(pd.to_numeric(row["os"], errors="coerce") or 0) * 1000
-                for hr in range(s, e + 1):
-                    om = hr - 1
-                    if 0 <= om <= 23:
-                        px_by_hour[om] += px_kw
-                        os_by_hour[om] += os_kw
+            if not is_sunday:
+                for _, row in fs_match.iterrows():
+                    hr_str = str(row["hr"]).strip()
+                    s, e = (int(hr_str.split("-")[0]), int(hr_str.split("-")[1])) if "-" in hr_str else (int(hr_str), int(hr_str))
+                    px_kw = float(pd.to_numeric(row["px"], errors="coerce") or 0) * 1000
+                    os_kw = float(pd.to_numeric(row["os"], errors="coerce") or 0) * 1000
+                    for hr in range(s, e + 1):
+                        om = hr - 1
+                        if 0 <= om <= 23:
+                            px_by_hour[om] += px_kw
+                            os_by_hour[om] += os_kw
             avg_px = px_by_hour
             avg_os = os_by_hour
         if "nebo" in fs.columns:
