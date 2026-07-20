@@ -761,6 +761,10 @@
           <div class="card-label">Additional PX (MWh/mo)</div>
           <div class="card-value" id="wi-add-mwh">—</div>
         </div>
+        <div class="card" style="flex:1;min-width:200px">
+          <div class="card-label">Monthly Cost Savings</div>
+          <div class="card-value" id="wi-cost-savings">—</div>
+        </div>
       </div>
 
       <!-- Charts: two columns -->
@@ -2304,6 +2308,14 @@
         `<span style="color:${delta <= 0 ? '#276749' : '#c53030'}">${deltaSign}$${delta.toFixed(2)}</span><span class="card-unit"> /MWh</span>`;
       document.getElementById("wi-add-mwh").innerHTML =
         `${Math.round(addMWh).toLocaleString()}<span class="card-unit"> MWh</span>`;
+
+      const currentTotalCost = Object.values(data.cost_pie).reduce((a, b) => a + b, 0);
+      const whatifTotalCost  = Object.values(wiCostPie).reduce((a, b) => a + b, 0);
+      const savings = currentTotalCost - whatifTotalCost;
+      const savingsEl = document.getElementById("wi-cost-savings");
+      savingsEl.innerHTML = savings >= 0
+        ? `<span style="color:#276749">$${Math.round(savings).toLocaleString()}</span>`
+        : `<span style="color:#c53030">-$${Math.round(Math.abs(savings)).toLocaleString()}</span>`;
 
       document.getElementById("wi-results").classList.remove("hidden");
       status.style.display = "none";
