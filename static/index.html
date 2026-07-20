@@ -305,6 +305,7 @@
     <button class="tab-btn"        id="tab-btn-supply"          onclick="switchTab('supply')">Supply Portfolio</button>
     <button class="tab-btn"        id="tab-btn-longterm"        onclick="switchTab('longterm')">Long Term</button>
     <button class="tab-btn"        id="tab-btn-dayplan"         onclick="switchTab('dayplan')">Day Plan</button>
+    <button class="tab-btn"        id="tab-btn-whatif"          onclick="switchTab('whatif')">PX What-If</button>
   </div>
 
   <!-- ══════════════════════ TAB 1: FORECAST ══════════════════════ -->
@@ -703,6 +704,89 @@
           </thead>
           <tbody id="dp-tbody"></tbody>
         </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════ TAB 10: PX WHAT-IF ══════════════════════ -->
+  <div id="tab-whatif" class="hidden">
+    <div class="controls">
+      <div class="field">
+        <label for="wi-month">Month</label>
+        <select id="wi-month" style="padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem">
+          <option value="1">January</option><option value="2">February</option>
+          <option value="3">March</option><option value="4">April</option>
+          <option value="5">May</option><option value="6">June</option>
+          <option value="7">July</option><option value="8" selected>August</option>
+          <option value="9">September</option><option value="10">October</option>
+          <option value="11">November</option><option value="12">December</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="wi-year">Year</label>
+        <select id="wi-year" style="padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem">
+          <option value="2026" selected>2026</option><option value="2027">2027</option>
+          <option value="2028">2028</option><option value="2029">2029</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="wi-mw">Additional PX (MW)</label>
+        <input type="number" id="wi-mw" value="20" min="1" max="200" style="width:80px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem">
+      </div>
+      <div class="field">
+        <label for="wi-rate">Rate ($/MWh)</label>
+        <input type="number" id="wi-rate" value="63" min="1" max="500" style="width:80px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem">
+      </div>
+      <button class="btn-primary" onclick="runWhatIf()">Run Analysis</button>
+      <span id="wi-status" style="font-size:.82rem;color:#718096;display:none"></span>
+    </div>
+    <p style="font-size:.78rem;color:#718096;margin-bottom:1rem">Schedule: +MW on HE 23–7 Mon–Sat and all day Sunday</p>
+
+    <div id="wi-results" class="hidden">
+      <!-- Blended cost comparison banner -->
+      <div style="display:flex;gap:1rem;margin-bottom:1.25rem;flex-wrap:wrap">
+        <div class="card" style="flex:1;min-width:200px">
+          <div class="card-label">Current Blended Cost</div>
+          <div class="card-value" id="wi-current-blended">—<span class="card-unit"> $/MWh</span></div>
+        </div>
+        <div class="card" style="flex:1;min-width:200px">
+          <div class="card-label">What-If Blended Cost</div>
+          <div class="card-value" id="wi-whatif-blended">—<span class="card-unit"> $/MWh</span></div>
+        </div>
+        <div class="card" style="flex:1;min-width:200px">
+          <div class="card-label">Change</div>
+          <div class="card-value" id="wi-delta">—<span class="card-unit"> $/MWh</span></div>
+        </div>
+        <div class="card" style="flex:1;min-width:200px">
+          <div class="card-label">Additional PX (MWh/mo)</div>
+          <div class="card-value" id="wi-add-mwh">—</div>
+        </div>
+      </div>
+
+      <!-- Charts: two columns -->
+      <div style="display:flex;gap:1.25rem;flex-wrap:wrap">
+        <!-- Current column -->
+        <div style="flex:1;min-width:380px">
+          <div class="chart-wrap">
+            <div class="chart-title" id="wi-current-chart-title">Current: Hourly Avg Load vs Supply</div>
+            <div class="chart-container"><canvas id="wi-current-chart"></canvas></div>
+          </div>
+          <div class="chart-wrap" style="margin-top:1.25rem">
+            <div class="chart-title">Current: Monthly Cost by Resource</div>
+            <div style="position:relative;height:300px"><canvas id="wi-current-pie"></canvas></div>
+          </div>
+        </div>
+        <!-- What-if column -->
+        <div style="flex:1;min-width:380px">
+          <div class="chart-wrap">
+            <div class="chart-title" id="wi-whatif-chart-title">What-If: Hourly Avg Load vs Supply</div>
+            <div class="chart-container"><canvas id="wi-whatif-chart"></canvas></div>
+          </div>
+          <div class="chart-wrap" style="margin-top:1.25rem">
+            <div class="chart-title" id="wi-whatif-pie-title">What-If: Monthly Cost by Resource</div>
+            <div style="position:relative;height:300px"><canvas id="wi-whatif-pie"></canvas></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -2013,6 +2097,219 @@
     });
 
     document.getElementById("dp-results").classList.remove("hidden");
+  }
+
+  // ── PX What-If ───────────────────────────────────────────────────────
+
+  let _wiCurrentChart = null, _wiWhatifChart = null;
+  let _wiCurrentPie   = null, _wiWhatifPie   = null;
+
+  // Additional PX schedule: HE 23-7 Mon-Sat + all day Sunday
+  // Returns the average additional kW for a given om_hour across all days of the month
+  function wiAddKWAtHour(om, additionalKW, daysInMonth, sundays) {
+    const monSat = daysInMonth - sundays;
+    // Overnight block covered by Mon-Sat schedule: om 22 (HE23), om 23 (HE24), om 0-6 (HE1-7)
+    const overnight = [22, 23, 0, 1, 2, 3, 4, 5, 6];
+    if (overnight.includes(om)) {
+      // Mon-Sat overnight + all-day Sunday = every day of the month
+      return additionalKW;
+    } else {
+      // Daytime: only all-day Sunday
+      return additionalKW * sundays / daysInMonth;
+    }
+  }
+
+  function wiDaysInfo(month, year) {
+    const daysInMonth = new Date(year, month, 0).getDate();
+    let sundays = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (new Date(year, month - 1, d).getDay() === 0) sundays++;
+    }
+    return { daysInMonth, sundays };
+  }
+
+  function wiComputeWhatifHourly(baseHourly, additionalKW, daysInMonth, sundays) {
+    return baseHourly.map(h => {
+      const addKW    = wiAddKWAtHour(h.hour, additionalKW, daysInMonth, sundays);
+      const newPX    = h.px + addKW;
+      const supply   = h.nebo + h.h_butte + newPX + h.os + h.red_mesa + h.steele_a + h.uamps;
+      const rawShort = Math.max(0, h.load - supply);
+      const intGen   = Math.min(rawShort, 21000);
+      const shortage = rawShort - intGen;
+      return { ...h, px: newPX, total_supply: supply + intGen, internal_gen: intGen, shortage };
+    });
+  }
+
+  function wiComputeCostPie(hourly, costRates, additionalKW, rate, daysInMonth, sundays, month) {
+    // Monthly MWh per resource using same logic as backend
+    const costPie = {};
+    const resources = ["nebo", "h_butte", "red_mesa", "steele_a", "px", "os", "internal_gen", "shortage"];
+    for (const res of resources) {
+      const mwh  = hourly.reduce((s, h) => s + (h[res] || 0), 0) * daysInMonth / 1000;
+      const cost = mwh * (costRates[res] || 0);
+      if (cost > 0) costPie[res] = Math.round(cost);
+    }
+    // Additional PX cost (separate slice)
+    let addMWh = 0;
+    for (let om = 0; om < 24; om++) {
+      const addKW = wiAddKWAtHour(om, additionalKW, daysInMonth, sundays);
+      addMWh += addKW * daysInMonth / 1000;
+    }
+    const addCost = Math.round(addMWh * rate);
+    if (addCost > 0) costPie["add_px"] = addCost;
+    return costPie;
+  }
+
+  function wiBlended(costPie, hourly, additionalKW, rate, daysInMonth, sundays, costRates) {
+    let totalCost = 0, totalMWh = 0;
+    for (const [res, dollars] of Object.entries(costPie)) {
+      totalCost += dollars;
+    }
+    const resources = ["nebo", "h_butte", "red_mesa", "steele_a", "px", "os", "internal_gen", "shortage"];
+    for (const res of resources) {
+      totalMWh += hourly.reduce((s, h) => s + (h[res] || 0), 0) * daysInMonth / 1000;
+    }
+    // Add the additional PX MWh (not already in hourly px breakdown separately)
+    let addMWh = 0;
+    for (let om = 0; om < 24; om++) {
+      addMWh += wiAddKWAtHour(om, additionalKW, daysInMonth, sundays) * daysInMonth / 1000;
+    }
+    totalMWh += addMWh;
+    return totalMWh > 0 ? totalCost / totalMWh : 0;
+  }
+
+  function wiRenderStackedBar(canvasId, hourly, label, existingChart) {
+    if (existingChart) existingChart.destroy();
+    return new Chart(document.getElementById(canvasId).getContext("2d"), {
+      type: "bar",
+      data: {
+        labels: hourly.map(h => h.hour + 1),
+        datasets: [
+          { label: "Nebo",        data: hourly.map(h => h.nebo),        stack:"s", backgroundColor: _LT_COLORS.nebo },
+          { label: "Horse Butte", data: hourly.map(h => h.h_butte),     stack:"s", backgroundColor: _LT_COLORS.h_butte },
+          { label: "PX",          data: hourly.map(h => h.px),          stack:"s", backgroundColor: _LT_COLORS.px },
+          { label: "OS",          data: hourly.map(h => h.os),          stack:"s", backgroundColor: _LT_COLORS.os },
+          { label: "Red Mesa",    data: hourly.map(h => h.red_mesa),    stack:"s", backgroundColor: _LT_COLORS.red_mesa },
+          { label: "Steele A",    data: hourly.map(h => h.steele_a),    stack:"s", backgroundColor: _LT_COLORS.steele_a },
+          { label: "UAMPS",       data: hourly.map(h => h.uamps),       stack:"s", backgroundColor: _LT_COLORS.uamps },
+          { label: "Internal Gen (21 MW)", data: hourly.map(h => h.internal_gen), stack:"s", backgroundColor: _LT_COLORS.internal_gen },
+          { label: "Remaining Shortage",   data: hourly.map(h => h.shortage),     stack:"s", backgroundColor: _LT_COLORS.shortage },
+          { type:"line", label:"Avg Load", data: hourly.map(h => h.load),
+            borderColor:"rgba(229,62,62,1)", backgroundColor:"transparent",
+            borderWidth:2.5, pointRadius:3, tension:0.3, fill:false },
+        ],
+      },
+      options: {
+        responsive:true, maintainAspectRatio:false,
+        interaction:{ mode:"index", intersect:false },
+        plugins:{
+          legend:{ position:"top" },
+          tooltip:{ callbacks:{ label: ctx => {
+            const v = ctx.parsed.y;
+            return ` ${ctx.dataset.label}: ${v != null ? Math.round(v).toLocaleString()+" kW" : "n/a"}`;
+          }}},
+        },
+        scales:{ y:{ stacked:true, title:{ display:true, text:"kW" }, beginAtZero:true }, x:{ stacked:true } },
+      },
+    });
+  }
+
+  const _WI_COST_LABELS = { ..._LT_COST_LABELS, add_px: "Add'l PX (new)" };
+  const _WI_COST_COLORS = { ..._LT_COST_COLORS, add_px: "rgba(49,79,200,0.85)" };
+
+  function wiRenderCostPie(canvasId, costPie, costRates, addRate, existingChart) {
+    if (existingChart) existingChart.destroy();
+    const keys   = Object.keys(costPie).filter(k => costPie[k] > 0);
+    const vals   = keys.map(k => costPie[k]);
+    const total  = vals.reduce((a, b) => a + b, 0);
+    const labels = keys.map(k => {
+      const pct = total > 0 ? (costPie[k] / total * 100).toFixed(1) : "0.0";
+      return `${_WI_COST_LABELS[k] || k} (${pct}%)`;
+    });
+    const colors = keys.map(k => _WI_COST_COLORS[k] || "rgba(160,174,192,0.85)");
+    return new Chart(document.getElementById(canvasId).getContext("2d"), {
+      type:"pie",
+      data:{ labels, datasets:[{ data:vals, backgroundColor:colors, borderWidth:1 }] },
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{
+          legend:{ position:"right", labels:{ font:{ size:11 }, padding:8 } },
+          tooltip:{ callbacks:{ label: ctx => {
+            const k = keys[ctx.dataIndex];
+            const r = k === "add_px" ? addRate : (costRates[k] || 0);
+            const rStr = r > 0 ? `  @ $${r}/MWh` : "";
+            return ` $${Math.round(ctx.parsed).toLocaleString()}${rStr}`;
+          }}},
+        },
+      },
+    });
+  }
+
+  async function runWhatIf() {
+    const month  = parseInt(document.getElementById("wi-month").value);
+    const year   = parseInt(document.getElementById("wi-year").value);
+    const addMW  = parseFloat(document.getElementById("wi-mw").value) || 20;
+    const rate   = parseFloat(document.getElementById("wi-rate").value) || 63;
+    const addKW  = addMW * 1000;
+    const status = document.getElementById("wi-status");
+    status.textContent = "Running…"; status.style.display = "inline";
+    document.getElementById("wi-results").classList.add("hidden");
+
+    try {
+      const res  = await fetch(`/api/longterm?month=${month}&year=${year}`);
+      const data = await res.json();
+      if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
+
+      const { daysInMonth, sundays } = wiDaysInfo(month, year);
+      const monthNames = ["","January","February","March","April","May","June",
+                          "July","August","September","October","November","December"];
+
+      // ── Current charts ────────────────────────────────────────────
+      document.getElementById("wi-current-chart-title").textContent =
+        `Current: ${monthNames[month]} ${year} — Hourly Avg Load vs Supply`;
+      _wiCurrentChart = wiRenderStackedBar("wi-current-chart", data.hourly, data.label, _wiCurrentChart);
+      _wiCurrentPie   = wiRenderCostPie("wi-current-pie", data.cost_pie, data.cost_rates, rate, _wiCurrentPie);
+
+      // ── What-If calculation ───────────────────────────────────────
+      const wiHourly   = wiComputeWhatifHourly(data.hourly, addKW, daysInMonth, sundays);
+      const wiCostPie  = wiComputeCostPie(wiHourly, data.cost_rates, addKW, rate, daysInMonth, sundays, month);
+      const wiRates    = { ...data.cost_rates, add_px: rate };
+
+      // Additional MWh purchased
+      let addMWh = 0;
+      for (let om = 0; om < 24; om++) {
+        addMWh += wiAddKWAtHour(om, addKW, daysInMonth, sundays) * daysInMonth / 1000;
+      }
+
+      // Blended costs
+      const currentBlended = data.blended_cost_per_mwh || 0;
+      const wiBlendedVal   = wiBlended(wiCostPie, wiHourly, addKW, rate, daysInMonth, sundays, data.cost_rates);
+
+      // ── What-If charts ────────────────────────────────────────────
+      document.getElementById("wi-whatif-chart-title").textContent =
+        `What-If: +${addMW} MW PX (HE 23–7 Mon–Sat + All Sun) — ${monthNames[month]} ${year}`;
+      document.getElementById("wi-whatif-pie-title").textContent =
+        `What-If: Monthly Cost by Resource (+${addMW} MW @ $${rate}/MWh)`;
+      _wiWhatifChart = wiRenderStackedBar("wi-whatif-chart", wiHourly, "", _wiWhatifChart);
+      _wiWhatifPie   = wiRenderCostPie("wi-whatif-pie", wiCostPie, wiRates, rate, _wiWhatifPie);
+
+      // ── Summary cards ─────────────────────────────────────────────
+      const delta = wiBlendedVal - currentBlended;
+      const deltaSign = delta >= 0 ? "+" : "";
+      document.getElementById("wi-current-blended").innerHTML =
+        `$${currentBlended.toFixed(2)}<span class="card-unit"> /MWh</span>`;
+      document.getElementById("wi-whatif-blended").innerHTML =
+        `$${wiBlendedVal.toFixed(2)}<span class="card-unit"> /MWh</span>`;
+      document.getElementById("wi-delta").innerHTML =
+        `<span style="color:${delta <= 0 ? '#276749' : '#c53030'}">${deltaSign}$${delta.toFixed(2)}</span><span class="card-unit"> /MWh</span>`;
+      document.getElementById("wi-add-mwh").innerHTML =
+        `${Math.round(addMWh).toLocaleString()}<span class="card-unit"> MWh</span>`;
+
+      document.getElementById("wi-results").classList.remove("hidden");
+      status.style.display = "none";
+    } catch(e) {
+      status.textContent = "Error: " + e.message;
+    }
   }
 
   // ── Init ──────────────────────────────────────────────────────────────
