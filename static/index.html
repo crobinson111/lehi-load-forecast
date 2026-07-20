@@ -647,10 +647,16 @@
         <div class="chart-container"><canvas id="lt-chart"></canvas></div>
       </div>
 
-      <!-- Pie chart -->
-      <div class="chart-wrap" style="max-width:540px;margin-top:1.25rem">
-        <div class="chart-title">Resource Mix (Daily Avg kW)</div>
-        <div style="position:relative;height:320px"><canvas id="lt-pie-chart"></canvas></div>
+      <!-- Pie charts side by side -->
+      <div style="display:flex;flex-wrap:wrap;gap:1.25rem;margin-top:1.25rem">
+        <div class="chart-wrap" style="flex:1;min-width:300px">
+          <div class="chart-title">Resource Mix (Daily Avg kW)</div>
+          <div style="position:relative;height:320px"><canvas id="lt-pie-chart"></canvas></div>
+        </div>
+        <div class="chart-wrap" style="flex:1;min-width:300px">
+          <div class="chart-title">Monthly Cost by Resource</div>
+          <div style="position:relative;height:320px"><canvas id="lt-cost-pie-chart"></canvas></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1746,8 +1752,9 @@
 
   // ── Long Term Planning ────────────────────────────────────────────────
 
-  let _ltChart    = null;
-  let _ltPieChart = null;
+  let _ltChart        = null;
+  let _ltPieChart     = null;
+  let _ltCostPieChart = null;
 
   const _LT_COLORS = {
     nebo:         "rgba(49,130,206,0.82)",
@@ -1764,6 +1771,30 @@
     nebo: "Nebo", h_butte: "Horse Butte", px: "PX", os: "OS",
     red_mesa: "Red Mesa", steele_a: "Steele A", uamps: "UAMPS",
     internal_gen: "Internal Gen (21 MW)", shortage: "Remaining Shortage",
+  };
+
+  const _LT_COST_LABELS = {
+    nebo: "Nebo", h_butte: "Horse Butte", px: "PX", os: "OS",
+    red_mesa: "Red Mesa", steele_a: "Steele A",
+    crsp: "CRSP", hunter: "Hunter", provo_riv: "Provo River",
+    mr: "MR (Jordanelle)", pv_wind: "PV Wind", veyo: "Veyo", olmsted: "Olmsted",
+    shortage: "Shortage",
+  };
+  const _LT_COST_COLORS = {
+    nebo:      "rgba(49,130,206,0.85)",
+    h_butte:   "rgba(72,187,120,0.85)",
+    px:        "rgba(159,122,234,0.85)",
+    os:        "rgba(56,178,172,0.85)",
+    red_mesa:  "rgba(237,137,54,0.85)",
+    steele_a:  "rgba(250,204,21,0.85)",
+    crsp:      "rgba(100,160,100,0.85)",
+    hunter:    "rgba(74,85,104,0.85)",
+    provo_riv: "rgba(44,122,123,0.85)",
+    mr:        "rgba(128,90,213,0.85)",
+    pv_wind:   "rgba(234,179,8,0.85)",
+    veyo:      "rgba(224,36,94,0.85)",
+    olmsted:   "rgba(56,161,105,0.85)",
+    shortage:  "rgba(255,105,180,0.85)",
   };
 
   async function runLongterm() {
@@ -1887,6 +1918,35 @@
         },
       },
     });
+
+    // Cost pie chart
+    if (data.cost_pie && Object.keys(data.cost_pie).length > 0) {
+      const costKeys   = Object.keys(data.cost_pie).filter(k => data.cost_pie[k] > 0);
+      const costValues = costKeys.map(k => data.cost_pie[k]);
+      const costTotal  = costValues.reduce((a, b) => a + b, 0);
+      const costLabels = costKeys.map(k => {
+        const pct = costTotal > 0 ? (data.cost_pie[k] / costTotal * 100).toFixed(1) : "0.0";
+        return `${_LT_COST_LABELS[k] || k} (${pct}%)`;
+      });
+      const costColors = costKeys.map(k => _LT_COST_COLORS[k] || "rgba(160,174,192,0.85)");
+      if (_ltCostPieChart) _ltCostPieChart.destroy();
+      _ltCostPieChart = new Chart(document.getElementById("lt-cost-pie-chart").getContext("2d"), {
+        type: "pie",
+        data: { labels: costLabels, datasets: [{ data: costValues, backgroundColor: costColors, borderWidth: 1 }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { position: "right", labels: { font: { size: 12 }, padding: 10 } },
+            tooltip: { callbacks: { label: ctx => {
+              const k = costKeys[ctx.dataIndex];
+              const rate = data.cost_rates && data.cost_rates[k] != null ? data.cost_rates[k] : null;
+              const rateStr = rate != null ? `  @ $${rate.toLocaleString()}/MWh` : "";
+              return ` $${Math.round(ctx.parsed).toLocaleString()}${rateStr}`;
+            }}},
+          },
+        },
+      });
+    }
   }
 
   // ── Day Plan ──────────────────────────────────────────────────────────

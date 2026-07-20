@@ -2194,6 +2194,8 @@ async def longterm_forecast(
 
     # ── 6. Blended resource cost ──────────────────────────────────────────
     blended_cost_per_mwh = None
+    cost_pie:   dict = {}
+    cost_rates: dict = {}
     costs_path = os.path.join(_BASE_DIR, "data", "resource_costs.csv")
     if os.path.exists(costs_path):
         try:
@@ -2211,6 +2213,7 @@ async def longterm_forecast(
 
             total_cost  = 0.0
             total_mwh   = 0.0
+            cost_by_resource: dict = {}
             for om, h in enumerate(hourly):
                 uamps_pairs = [(col, avg_uamps_sub[col].get(om, 0.0)) for col in _uamps_sub_cols]
                 for res, kw in [
@@ -2223,10 +2226,15 @@ async def longterm_forecast(
                     ("shortage", h["shortage"]),
                 ] + uamps_pairs:
                     mwh = kw * days_in_month / 1000.0
-                    total_cost += mwh * _res_cost(res)
+                    rate = _res_cost(res)
+                    cost = mwh * rate
+                    total_cost += cost
                     total_mwh  += mwh
+                    cost_by_resource[res] = cost_by_resource.get(res, 0.0) + cost
             if total_mwh > 0:
                 blended_cost_per_mwh = round(total_cost / total_mwh, 2)
+            cost_pie   = {res: round(v) for res, v in cost_by_resource.items() if v > 0}
+            cost_rates = {res: _res_cost(res) for res in cost_pie}
         except Exception as _exc:
             logger.warning(f"Blended cost calculation failed: {_exc}")
 
@@ -2243,6 +2251,8 @@ async def longterm_forecast(
         "yoy_growth": yoy_growth,
         "yoy_days": yoy_days,
         "blended_cost_per_mwh": blended_cost_per_mwh,
+        "cost_pie": cost_pie,
+        "cost_rates": cost_rates,
     }
 
 
