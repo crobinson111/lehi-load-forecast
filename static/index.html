@@ -747,6 +747,15 @@
             <input type="number" id="wi-low-rate" value="63" min="1" max="500" style="width:65px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
         </div>
       </div>
+      <div style="display:flex;flex-direction:column;gap:.3rem;padding:.5rem .75rem;background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px">
+        <div style="font-size:.7rem;font-weight:700;color:#702459;text-transform:uppercase;letter-spacing:.06em">Super Peak — HE 14–21, Mon–Sat</div>
+        <div style="display:flex;gap:.5rem">
+          <div class="field" style="margin:0"><label for="wi-sp-mw" style="font-size:.75rem">MW</label>
+            <input type="number" id="wi-sp-mw" value="0" min="0" max="200" style="width:65px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
+          <div class="field" style="margin:0"><label for="wi-sp-rate" style="font-size:.75rem">$/MWh</label>
+            <input type="number" id="wi-sp-rate" value="63" min="1" max="500" style="width:65px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
+        </div>
+      </div>
       <button class="btn-primary" onclick="runWhatIf()">Run Analysis</button>
       <span id="wi-status" style="font-size:.82rem;color:#718096;display:none"></span>
     </div>
@@ -781,6 +790,10 @@
         <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">Low Load Added</div>
           <div class="card-value" id="wi-add-low-mwh">—</div>
+        </div>
+        <div class="card" style="flex:1;min-width:170px">
+          <div class="card-label">Super Peak Added</div>
+          <div class="card-value" id="wi-add-sp-mwh">—</div>
         </div>
         <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">Monthly Cost Savings</div>
@@ -2152,11 +2165,12 @@
   // Iterates every calendar day of the month to build per-hour average kW added.
   // High load: HE 8-23 (om 7-22) Mon-Sat non-holidays.
   // Low load: HE 24-7 (om 23, 0-6) Mon-Sat non-holidays + all 24 hours Sun/holidays.
-  function wiComputeAdditionalKW(month, year, highKW, lowKW) {
+  function wiComputeAdditionalKW(month, year, highKW, lowKW, spKW) {
     const daysInMonth = new Date(year, month, 0).getDate();
     const holidays    = getWECCHolidays(year);
     const highDays    = new Array(24).fill(0);
     const lowDays     = new Array(24).fill(0);
+    const spDays      = new Array(24).fill(0);
     for (let d = 1; d <= daysInMonth; d++) {
       const dow    = new Date(year, month - 1, d).getDay();
       const ds     = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
@@ -2164,20 +2178,24 @@
       for (let om = 0; om < 24; om++) {
         if (!allLow && om >= 7 && om <= 22) highDays[om]++;
         else                                lowDays[om]++;
+        if (!allLow && om >= 13 && om <= 20) spDays[om]++;
       }
     }
     const addByHour  = new Array(24).fill(0);
     const highByHour = new Array(24).fill(0);
     const lowByHour  = new Array(24).fill(0);
-    let highMWh = 0, lowMWh = 0;
+    const spByHour   = new Array(24).fill(0);
+    let highMWh = 0, lowMWh = 0, spMWh = 0;
     for (let om = 0; om < 24; om++) {
       highByHour[om] = highDays[om] * highKW / daysInMonth;
       lowByHour[om]  = lowDays[om]  * lowKW  / daysInMonth;
-      addByHour[om]  = highByHour[om] + lowByHour[om];
+      spByHour[om]   = spDays[om]   * spKW   / daysInMonth;
+      addByHour[om]  = highByHour[om] + lowByHour[om] + spByHour[om];
       highMWh += highDays[om] * highKW / 1000;
       lowMWh  += lowDays[om]  * lowKW  / 1000;
+      spMWh   += spDays[om]   * spKW   / 1000;
     }
-    return { addByHour, highByHour, lowByHour, highMWh, lowMWh, daysInMonth };
+    return { addByHour, highByHour, lowByHour, spByHour, highMWh, lowMWh, spMWh, daysInMonth };
   }
 
   function wiComputeWhatifHourly(baseHourly, addInfo) {
@@ -2185,19 +2203,20 @@
       const om       = h.hour;
       const addHigh  = addInfo.highByHour[om] || 0;
       const addLow   = addInfo.lowByHour[om]  || 0;
-      const newPX    = h.px + addHigh + addLow;
+      const addSP    = addInfo.spByHour[om]   || 0;
+      const newPX    = h.px + addHigh + addLow + addSP;
       const supply   = h.nebo + h.h_butte + newPX + h.os + h.red_mesa + h.steele_a + h.uamps;
       const rawShort = Math.max(0, h.load - supply);
       const intGen   = Math.min(rawShort, 21000);
       const shortage = rawShort - intGen;
-      return { ...h, px: h.px, add_px_high: addHigh, add_px_low: addLow,
+      return { ...h, px: h.px, add_px_high: addHigh, add_px_low: addLow, add_px_sp: addSP,
                total_supply: supply + intGen, internal_gen: intGen, shortage };
     });
   }
 
   // Builds the what-if cost pie: start from base, override internal_gen/shortage,
   // add two new PX slices. UAMPS sub-resources are unchanged so they carry through.
-  function wiComputeCostPie(baseCostPie, costRates, wiHourly, addInfo, highRate, lowRate, daysInMonth) {
+  function wiComputeCostPie(baseCostPie, costRates, wiHourly, addInfo, highRate, lowRate, spRate, daysInMonth) {
     const costPie = { ...baseCostPie };
     const igMwh   = wiHourly.reduce((s, h) => s + (h.internal_gen || 0), 0) * daysInMonth / 1000;
     const igCost  = Math.round(igMwh * (costRates.internal_gen || 0));
@@ -2207,8 +2226,10 @@
     if (shCost > 0) costPie.shortage = shCost; else delete costPie.shortage;
     const highCost = Math.round(addInfo.highMWh * highRate);
     const lowCost  = Math.round(addInfo.lowMWh  * lowRate);
+    const spCost   = Math.round(addInfo.spMWh   * spRate);
     if (highCost > 0) costPie.add_px_high = highCost;
     if (lowCost  > 0) costPie.add_px_low  = lowCost;
+    if (spCost   > 0) costPie.add_px_sp   = spCost;
     return costPie;
   }
 
@@ -2269,8 +2290,9 @@
           { label: "Nebo",        data: hourly.map(h => h.nebo),        stack:"s", backgroundColor: _LT_COLORS.nebo },
           { label: "Horse Butte", data: hourly.map(h => h.h_butte),     stack:"s", backgroundColor: _LT_COLORS.h_butte },
           { label: "PX (base)",   data: hourly.map(h => h.px),          stack:"s", backgroundColor: _LT_COLORS.px },
-          { label: "Add'l PX High", data: hourly.map(h => h.add_px_high || 0), stack:"s", backgroundColor: "rgba(49,79,200,0.75)" },
-          { label: "Add'l PX Low",  data: hourly.map(h => h.add_px_low  || 0), stack:"s", backgroundColor: "rgba(39,103,73,0.75)" },
+          { label: "Add'l PX High",       data: hourly.map(h => h.add_px_high || 0), stack:"s", backgroundColor: "rgba(49,79,200,0.75)" },
+          { label: "Add'l PX Low",        data: hourly.map(h => h.add_px_low  || 0), stack:"s", backgroundColor: "rgba(39,103,73,0.75)" },
+          { label: "Add'l PX Super Peak", data: hourly.map(h => h.add_px_sp   || 0), stack:"s", backgroundColor: "rgba(180,50,120,0.75)" },
           { label: "OS",          data: hourly.map(h => h.os),          stack:"s", backgroundColor: _LT_COLORS.os },
           { label: "Red Mesa",    data: hourly.map(h => h.red_mesa),    stack:"s", backgroundColor: _LT_COLORS.red_mesa },
           { label: "Steele A",    data: hourly.map(h => h.steele_a),    stack:"s", backgroundColor: _LT_COLORS.steele_a },
@@ -2297,8 +2319,8 @@
     });
   }
 
-  const _WI_COST_LABELS = { ..._LT_COST_LABELS, add_px_high: "Add'l PX High", add_px_low: "Add'l PX Low" };
-  const _WI_COST_COLORS = { ..._LT_COST_COLORS, add_px_high: "rgba(49,79,200,0.85)", add_px_low: "rgba(39,103,73,0.85)" };
+  const _WI_COST_LABELS = { ..._LT_COST_LABELS, add_px_high: "Add'l PX High", add_px_low: "Add'l PX Low", add_px_sp: "Add'l PX Super Peak" };
+  const _WI_COST_COLORS = { ..._LT_COST_COLORS, add_px_high: "rgba(49,79,200,0.85)", add_px_low: "rgba(39,103,73,0.85)", add_px_sp: "rgba(180,50,120,0.85)" };
 
   function wiRenderCostPie(canvasId, costPie, rateMap, existingChart) {
     if (existingChart) existingChart.destroy();
@@ -2335,8 +2357,11 @@
     const highRate = parseFloat(document.getElementById("wi-high-rate").value) || 63;
     const lowMW    = parseFloat(document.getElementById("wi-low-mw").value) || 0;
     const lowRate  = parseFloat(document.getElementById("wi-low-rate").value) || 63;
+    const spMW     = parseFloat(document.getElementById("wi-sp-mw").value) || 0;
+    const spRate   = parseFloat(document.getElementById("wi-sp-rate").value) || 63;
     const highKW   = highMW * 1000;
     const lowKW    = lowMW  * 1000;
+    const spKW     = spMW   * 1000;
     const status   = document.getElementById("wi-status");
     status.textContent = "Running…"; status.style.display = "inline";
     document.getElementById("wi-results").classList.add("hidden");
@@ -2346,7 +2371,7 @@
       const data = await res.json();
       if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
 
-      const addInfo = wiComputeAdditionalKW(month, year, highKW, lowKW);
+      const addInfo = wiComputeAdditionalKW(month, year, highKW, lowKW, spKW);
       const { daysInMonth } = addInfo;
       const monthNames = ["","January","February","March","April","May","June",
                           "July","August","September","October","November","December"];
@@ -2359,8 +2384,8 @@
 
       // ── What-If calculation ───────────────────────────────────────
       const wiHourly  = wiComputeWhatifHourly(data.hourly, addInfo);
-      const wiCostPie = wiComputeCostPie(data.cost_pie, data.cost_rates, wiHourly, addInfo, highRate, lowRate, daysInMonth);
-      const wiRateMap = { ...data.cost_rates, add_px_high: highRate, add_px_low: lowRate };
+      const wiCostPie = wiComputeCostPie(data.cost_pie, data.cost_rates, wiHourly, addInfo, highRate, lowRate, spRate, daysInMonth);
+      const wiRateMap = { ...data.cost_rates, add_px_high: highRate, add_px_low: lowRate, add_px_sp: spRate };
 
       // Blended costs
       const currentBlended = data.blended_cost_per_mwh || 0;
@@ -2370,6 +2395,7 @@
       const parts = [];
       if (highMW > 0) parts.push(`+${highMW} MW High @ $${highRate}`);
       if (lowMW  > 0) parts.push(`+${lowMW} MW Low @ $${lowRate}`);
+      if (spMW   > 0) parts.push(`+${spMW} MW Super Peak @ $${spRate}`);
       const comboLabel = parts.join(", ") || "No additional PX";
       document.getElementById("wi-whatif-chart-title").textContent =
         `What-If: ${comboLabel} — ${monthNames[month]} ${year}`;
@@ -2391,6 +2417,8 @@
         `${Math.round(addInfo.highMWh).toLocaleString()}<span class="card-unit"> MWh</span>`;
       document.getElementById("wi-add-low-mwh").innerHTML =
         `${Math.round(addInfo.lowMWh).toLocaleString()}<span class="card-unit"> MWh</span>`;
+      document.getElementById("wi-add-sp-mwh").innerHTML =
+        `${Math.round(addInfo.spMWh).toLocaleString()}<span class="card-unit"> MWh</span>`;
 
       const currentTotalCost = Object.values(data.cost_pie).reduce((a, b) => a + b, 0);
       const whatifTotalCost  = Object.values(wiCostPie).reduce((a, b) => a + b, 0);
