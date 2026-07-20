@@ -754,15 +754,23 @@
     <div id="wi-results" class="hidden">
       <!-- Blended cost comparison banner -->
       <div style="display:flex;gap:1rem;margin-bottom:1.25rem;flex-wrap:wrap">
-        <div class="card" style="flex:1;min-width:200px">
+        <div class="card" style="flex:1;min-width:170px">
+          <div class="card-label">Current Total Cost</div>
+          <div class="card-value" id="wi-current-total">—</div>
+        </div>
+        <div class="card" style="flex:1;min-width:170px">
+          <div class="card-label">What-If Total Cost</div>
+          <div class="card-value" id="wi-whatif-total">—</div>
+        </div>
+        <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">Current Blended Cost</div>
           <div class="card-value" id="wi-current-blended">—<span class="card-unit"> $/MWh</span></div>
         </div>
-        <div class="card" style="flex:1;min-width:200px">
+        <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">What-If Blended Cost</div>
           <div class="card-value" id="wi-whatif-blended">—<span class="card-unit"> $/MWh</span></div>
         </div>
-        <div class="card" style="flex:1;min-width:200px">
+        <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">Change</div>
           <div class="card-value" id="wi-delta">—<span class="card-unit"> $/MWh</span></div>
         </div>
@@ -2386,6 +2394,10 @@
 
       const currentTotalCost = Object.values(data.cost_pie).reduce((a, b) => a + b, 0);
       const whatifTotalCost  = Object.values(wiCostPie).reduce((a, b) => a + b, 0);
+      document.getElementById("wi-current-total").innerHTML =
+        `$${Math.round(currentTotalCost).toLocaleString()}`;
+      document.getElementById("wi-whatif-total").innerHTML =
+        `$${Math.round(whatifTotalCost).toLocaleString()}`;
       const savings = currentTotalCost - whatifTotalCost;
       document.getElementById("wi-cost-savings").innerHTML = savings >= 0
         ? `<span style="color:#276749">$${Math.round(savings).toLocaleString()}</span>`
