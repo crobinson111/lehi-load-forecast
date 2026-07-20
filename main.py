@@ -2211,29 +2211,28 @@ async def longterm_forecast(
                     return float(any_row["cost_per_mwh"].iloc[0])
                 return 0.0
 
-            total_cost  = 0.0
-            total_mwh   = 0.0
-            cost_by_resource: dict = {}
-            for om, h in enumerate(hourly):
-                uamps_pairs = [(col, avg_uamps_sub[col].get(om, 0.0)) for col in _uamps_sub_cols]
-                for res, kw in [
-                    ("nebo",     h["nebo"]),
-                    ("h_butte",  h["h_butte"]),
-                    ("red_mesa", h["red_mesa"]),
-                    ("steele_a", h["steele_a"]),
-                    ("px",       h["px"]),
-                    ("os",       h["os"]),
-                    ("shortage", h["shortage"]),
-                ] + uamps_pairs:
-                    mwh = kw * days_in_month / 1000.0
-                    rate = _res_cost(res)
-                    cost = mwh * rate
-                    total_cost += cost
-                    total_mwh  += mwh
-                    cost_by_resource[res] = cost_by_resource.get(res, 0.0) + cost
+            # Step 1: total monthly MWh per resource
+            # = sum of avg hourly kW across all 24 hours × days_in_month / 1000
+            resource_mwh: dict = {}
+            for res in ["nebo", "h_butte", "red_mesa", "steele_a", "px", "os", "shortage"]:
+                monthly_kwh = sum(h.get(res, 0) for h in hourly) * days_in_month
+                resource_mwh[res] = monthly_kwh / 1000.0
+            for col in _uamps_sub_cols:
+                if col == "veyo":
+                    resource_mwh["veyo"] = 0.0  # excluded — standby only
+                    continue
+                monthly_kwh = sum(avg_uamps_sub[col].get(om, 0.0) for om in range(24)) * days_in_month
+                resource_mwh[col] = monthly_kwh / 1000.0
+
+            # Step 2: cost per resource = MWh × $/MWh
+            # Step 3: blended = total cost / total MWh (weighted average)
+            total_cost = sum(mwh * _res_cost(res) for res, mwh in resource_mwh.items())
+            total_mwh  = sum(resource_mwh.values())
             if total_mwh > 0:
                 blended_cost_per_mwh = round(total_cost / total_mwh, 2)
-            cost_pie   = {res: round(v) for res, v in cost_by_resource.items() if v > 0}
+            cost_pie   = {res: round(mwh * _res_cost(res))
+                          for res, mwh in resource_mwh.items()
+                          if round(mwh * _res_cost(res)) > 0}
             cost_rates = {res: _res_cost(res) for res in cost_pie}
         except Exception as _exc:
             logger.warning(f"Blended cost calculation failed: {_exc}")
