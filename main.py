@@ -2212,16 +2212,28 @@ async def longterm_forecast(
                 return 0.0
 
             # Step 1: total monthly MWh per resource
-            # = sum of avg hourly kW across all 24 hours × days_in_month / 1000
+            # Use exactly the same data as the resource graphs (hourly array).
             resource_mwh: dict = {}
-            for res in ["nebo", "h_butte", "red_mesa", "steele_a", "px", "os", "shortage"]:
+
+            # Non-UAMPS resources — directly from hourly (includes internal_gen)
+            for res in ["nebo", "h_butte", "red_mesa", "steele_a", "px", "os",
+                        "internal_gen", "shortage"]:
                 monthly_kwh = sum(h.get(res, 0) for h in hourly) * days_in_month
                 resource_mwh[res] = monthly_kwh / 1000.0
+
+            # UAMPS sub-resources — proportionally split hourly["uamps"] (the
+            # forecasted value used in the graph) by each sub-resource's share
             for col in _uamps_sub_cols:
                 if col == "veyo":
-                    resource_mwh["veyo"] = 0.0  # excluded — standby only
+                    resource_mwh["veyo"] = 0.0  # standby only — assume 0 MW
                     continue
-                monthly_kwh = sum(avg_uamps_sub[col].get(om, 0.0) for om in range(24)) * days_in_month
+                monthly_kwh = 0.0
+                for om in range(24):
+                    uamps_graph = hourly[om]["uamps"]
+                    uamps_raw   = avg_uamps.get(om, 0)
+                    sub_raw     = avg_uamps_sub[col].get(om, 0.0)
+                    sub_kw      = uamps_graph * (sub_raw / uamps_raw) if uamps_raw > 0 else 0.0
+                    monthly_kwh += sub_kw * days_in_month
                 resource_mwh[col] = monthly_kwh / 1000.0
 
             # Step 2: cost per resource = MWh × $/MWh
