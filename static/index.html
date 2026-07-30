@@ -1895,6 +1895,17 @@
     internal_gen: "Internal Gen (21 MW)", shortage: "Remaining Shortage",
   };
 
+  // Palette for fixed power purchases (cycled by index)
+  const _PUR_COLORS = [
+    "rgba(220,105,30,0.85)",
+    "rgba(49,130,206,0.65)",
+    "rgba(128,90,213,0.75)",
+    "rgba(56,161,105,0.65)",
+    "rgba(229,62,62,0.65)",
+  ];
+  const _PUR_LABELS = {}; // populated at runtime from data.purchases
+  const _PUR_COLOR_MAP = {}; // populated at runtime
+
   const _LT_COST_LABELS = {
     nebo: "Nebo", h_butte: "Horse Butte", px: "PX", os: "OS",
     red_mesa: "Red Mesa", steele_a: "Steele A",
@@ -1991,6 +2002,11 @@
           { label: "Red Mesa",   data: data.hourly.map(h => h.red_mesa), stack: "s", backgroundColor: _LT_COLORS.red_mesa, yAxisID: "y" },
           { label: "Steele A",   data: data.hourly.map(h => h.steele_a), stack: "s", backgroundColor: _LT_COLORS.steele_a, yAxisID: "y" },
           { label: "UAMPS",        data: data.hourly.map(h => h.uamps),        stack: "s", backgroundColor: _LT_COLORS.uamps,        yAxisID: "y" },
+          ...(data.purchases || []).map((p, i) => ({
+            label: `${p.label} (${p.mw} MW ${p.schedule.toUpperCase()})`,
+            data: data.hourly.map(h => h[p.key] || 0),
+            stack: "s", backgroundColor: _PUR_COLORS[i % _PUR_COLORS.length], yAxisID: "y",
+          })),
           { label: "Internal Gen (21 MW)", data: data.hourly.map(h => h.internal_gen), stack: "s", backgroundColor: _LT_COLORS.internal_gen, yAxisID: "y" },
           { label: "Remaining Shortage",   data: data.hourly.map(h => h.shortage),     stack: "s", backgroundColor: _LT_COLORS.shortage,     yAxisID: "y" },
           { type: "line", label: "Avg Load",
@@ -2015,14 +2031,26 @@
       },
     });
 
+    // Register purchase labels/colors for cost pie lookup
+    (data.purchases || []).forEach((p, i) => {
+      const color = _PUR_COLORS[i % _PUR_COLORS.length];
+      _PUR_LABELS[p.key]    = `${p.label} (${p.mw} MW ${p.schedule.toUpperCase()})`;
+      _PUR_COLOR_MAP[p.key] = color;
+      _LT_COST_LABELS[p.key] = _PUR_LABELS[p.key];
+      _LT_COST_COLORS[p.key] = color;
+    });
+
     // Pie chart — daily totals (sum of 24 hourly averages)
-    const pieKeys    = ["nebo","h_butte","px","os","red_mesa","steele_a","uamps","internal_gen","shortage"];
+    const _baseKeys  = ["nebo","h_butte","px","os","red_mesa","steele_a","uamps","internal_gen","shortage"];
+    const _purKeys   = (data.purchases || []).map(p => p.key);
+    const pieKeys    = [..._baseKeys.slice(0,7), ..._purKeys, ..._baseKeys.slice(7)];
     const pieValues  = pieKeys.map(k => data.pie[k] || 0);
     const pieTotal   = pieValues.reduce((a, b) => a + b, 0);
-    const pieColors  = pieKeys.map(k => _LT_COLORS[k]);
+    const pieColors  = pieKeys.map(k => _LT_COLORS[k] || _PUR_COLOR_MAP[k] || "rgba(160,174,192,0.85)");
     const pieLabels  = pieKeys.map(k => {
       const pct = pieTotal > 0 ? ((data.pie[k] || 0) / pieTotal * 100).toFixed(1) : "0.0";
-      return `${_LT_LABELS[k]} (${pct}%)`;
+      const lbl = _LT_LABELS[k] || _PUR_LABELS[k] || k;
+      return `${lbl} (${pct}%)`;
     });
 
     if (_ltPieChart) _ltPieChart.destroy();

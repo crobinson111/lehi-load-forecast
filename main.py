@@ -333,6 +333,29 @@ def load_plant_data(plant_key: str) -> pd.DataFrame:
     return df[["date", "hr", "kwh"]]
 
 
+def _wecc_holidays(year: int) -> set:
+    """Return WECC holiday date strings (YYYY-MM-DD) for the given year."""
+    from datetime import date as _d
+    h = {f"{year}-01-01", f"{year}-07-04", f"{year}-12-25"}
+    d = _d(year, 5, 31)                          # Memorial Day: last Monday of May
+    while d.weekday() != 0:
+        d = _d(d.year, d.month, d.day - 1)
+    h.add(d.isoformat())
+    d = _d(year, 9, 1)                           # Labor Day: first Monday of September
+    while d.weekday() != 0:
+        d = _d(d.year, d.month, d.day + 1)
+    h.add(d.isoformat())
+    d, n = _d(year, 11, 1), 0                    # Thanksgiving: fourth Thursday of November
+    while n < 4:
+        if d.weekday() == 3:
+            n += 1
+            if n == 4:
+                break
+        d = _d(d.year, d.month, d.day + 1)
+    h.add(d.isoformat())
+    return h
+
+
 def load_supply_history() -> dict:
     """Load Nebo, H Butte, PX, OS hourly data. Returns {date: {om_hour: {nebo, h_butte, px, os}}}."""
     url = os.environ.get("SUPPLY_HISTORY_CSV_URL")
@@ -2142,6 +2165,48 @@ async def longterm_forecast(
     avg_uamps    = u_df.groupby("om_hour")["uamps"].mean().to_dict()
     avg_uamps_sub = {col: u_df.groupby("om_hour")[col].mean().to_dict() for col in _uamps_sub_cols}
 
+    # ── 3b. Fixed power purchases for this month ──────────────────────────
+    # Reads data/power_purchases.csv: label,year,month,mw,rate_per_mwh,schedule
+    # schedule types: "atc" (all hours every day), "llh" (HE 24-7 Mon-Sat + all Sun/holidays)
+    purchases: list = []
+    pur_path = os.path.join(_BASE_DIR, "data", "power_purchases.csv")
+    if os.path.exists(pur_path):
+        try:
+            pur_df = pd.read_csv(pur_path)
+            pur_df_mo = pur_df[
+                (pur_df["year"].astype(int) == year) &
+                (pur_df["month"].astype(int) == month)
+            ]
+            holidays = _wecc_holidays(year)
+            for _, pur_row in pur_df_mo.iterrows():
+                lbl      = str(pur_row["label"]).strip()
+                kw       = float(pur_row["mw"]) * 1000.0
+                rate     = float(pur_row["rate_per_mwh"])
+                sched    = str(pur_row["schedule"]).strip().lower()
+                key      = "pur_" + lbl.lower().replace(" ", "_")
+                kw_by_hour: dict = {}
+                for om in range(24):
+                    total_kw = 0.0
+                    for day in month_days:
+                        dow        = day.weekday()           # 0=Mon, 6=Sun
+                        is_sun     = dow == 6
+                        is_hol     = day.isoformat() in holidays
+                        all_day    = is_sun or is_hol
+                        if sched == "atc":
+                            total_kw += kw
+                        elif sched == "llh":
+                            is_llh_hr = (om <= 6) or (om == 23)
+                            if all_day or (not is_sun and not is_hol and is_llh_hr):
+                                total_kw += kw
+                    kw_by_hour[om] = round(total_kw / days_in_month, 1)
+                purchases.append({
+                    "label": lbl, "key": key, "rate": rate,
+                    "schedule": sched, "mw": float(pur_row["mw"]),
+                    "kw_by_hour": kw_by_hour,
+                })
+        except Exception as _exc:
+            logger.warning(f"Power purchases load failed: {_exc}")
+
     # ── 4. Build hourly averages for bar chart ────────────────────────────
     month_name = _cal.month_name[month]
     hourly = []
@@ -2154,17 +2219,21 @@ async def longterm_forecast(
         red_mesa = round(avg_rm.get(om, 0))
         steele_a = round(avg_sa.get(om, 0))
         uamps    = round(avg_uamps.get(om, 0))
-        supply       = nebo + h_butte + px + os_ + red_mesa + steele_a + uamps
+        pur_kw   = sum(p["kw_by_hour"][om] for p in purchases)
+        supply       = nebo + h_butte + px + os_ + red_mesa + steele_a + uamps + pur_kw
         raw_shortage = max(0, load - supply)
         internal_gen = min(raw_shortage, 21000)
         shortage     = raw_shortage - internal_gen
-        hourly.append({
+        h_entry = {
             "hour": om, "load": load,
             "nebo": nebo, "h_butte": h_butte, "px": px, "os": os_,
             "red_mesa": red_mesa, "steele_a": steele_a, "uamps": uamps,
             "internal_gen": internal_gen,
             "total_supply": supply + internal_gen, "shortage": shortage,
-        })
+        }
+        for p in purchases:
+            h_entry[p["key"]] = p["kw_by_hour"][om]
+        hourly.append(h_entry)
 
     # ── 5. Per-day shortage sums → average across month ───────────────────
     # Sum shortage per hour for each actual day (zeroed per hour, no cross-hour netting),
@@ -2173,7 +2242,8 @@ async def longterm_forecast(
         om: (round(avg_nebo.get(om, 0)) + round(avg_h_butte.get(om, 0)) +
              round(avg_px.get(om, 0))   + round(avg_os.get(om, 0)) +
              round(avg_rm.get(om, 0))   + round(avg_sa.get(om, 0)) +
-             round(avg_uamps.get(om, 0)))
+             round(avg_uamps.get(om, 0)) +
+             sum(p["kw_by_hour"][om] for p in purchases))
         for om in range(24)
     }
     daily_shortages_kwh: list = []
@@ -2189,8 +2259,9 @@ async def longterm_forecast(
     avg_supply = round(sum(h["total_supply"] for h in hourly) / 24)
     peak_h = max(hourly, key=lambda h: h["load"])
 
-    pie = {k: round(sum(h[k] for h in hourly)) for k in
-           ["nebo", "h_butte", "px", "os", "red_mesa", "steele_a", "uamps", "internal_gen", "shortage"]}
+    _pie_keys = ["nebo", "h_butte", "px", "os", "red_mesa", "steele_a", "uamps", "internal_gen", "shortage"]
+    _pie_keys += [p["key"] for p in purchases]
+    pie = {k: round(sum(h[k] for h in hourly)) for k in _pie_keys}
 
     # ── 6. Blended resource cost ──────────────────────────────────────────
     blended_cost_per_mwh = None
@@ -2236,16 +2307,25 @@ async def longterm_forecast(
                     monthly_kwh += sub_kw * days_in_month
                 resource_mwh[col] = monthly_kwh / 1000.0
 
+            # Power purchase MWh — keyed by purchase key, rated from CSV
+            _pur_rates = {p["key"]: p["rate"] for p in purchases}
+            for p in purchases:
+                monthly_kwh = sum(h.get(p["key"], 0) for h in hourly) * days_in_month
+                resource_mwh[p["key"]] = monthly_kwh / 1000.0
+
+            def _get_rate(res: str) -> float:
+                return _pur_rates.get(res) or _res_cost(res)
+
             # Step 2: cost per resource = MWh × $/MWh
             # Step 3: blended = total cost / total MWh (weighted average)
-            total_cost = sum(mwh * _res_cost(res) for res, mwh in resource_mwh.items())
+            total_cost = sum(mwh * _get_rate(res) for res, mwh in resource_mwh.items())
             total_mwh  = sum(resource_mwh.values())
             if total_mwh > 0:
                 blended_cost_per_mwh = round(total_cost / total_mwh, 2)
-            cost_pie   = {res: round(mwh * _res_cost(res))
+            cost_pie   = {res: round(mwh * _get_rate(res))
                           for res, mwh in resource_mwh.items()
-                          if round(mwh * _res_cost(res)) > 0}
-            cost_rates = {res: _res_cost(res) for res in cost_pie}
+                          if round(mwh * _get_rate(res)) > 0}
+            cost_rates = {res: _get_rate(res) for res in cost_pie}
         except Exception as _exc:
             logger.warning(f"Blended cost calculation failed: {_exc}")
 
@@ -2264,6 +2344,8 @@ async def longterm_forecast(
         "blended_cost_per_mwh": blended_cost_per_mwh,
         "cost_pie": cost_pie,
         "cost_rates": cost_rates,
+        "purchases": [{"label": p["label"], "key": p["key"], "mw": p["mw"],
+                        "rate": p["rate"], "schedule": p["schedule"]} for p in purchases],
     }
 
 
