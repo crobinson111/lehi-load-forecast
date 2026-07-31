@@ -306,6 +306,7 @@
     <button class="tab-btn"        id="tab-btn-longterm"        onclick="switchTab('longterm')">Long Term</button>
     <button class="tab-btn"        id="tab-btn-dayplan"         onclick="switchTab('dayplan')">Day Plan</button>
     <button class="tab-btn"        id="tab-btn-whatif"          onclick="switchTab('whatif')">PX What-If</button>
+    <button class="tab-btn"        id="tab-btn-history"         onclick="switchTab('history'); if(!_histLoaded){_histLoaded=true;runHistory();}">Week History</button>
   </div>
 
   <!-- ══════════════════════ TAB 1: FORECAST ══════════════════════ -->
@@ -829,6 +830,22 @@
     </div>
   </div>
 
+  <!-- ══════════════════════ TAB 11: WEEK HISTORY ══════════════════════ -->
+  <div id="tab-history" class="hidden">
+    <div class="controls" style="align-items:center;gap:.75rem;flex-wrap:wrap">
+      <button class="btn-secondary" onclick="historyNav(-7)" style="font-size:1.1rem;padding:.35rem .9rem">&#8249;</button>
+      <span id="hist-range-label" style="font-weight:600;font-size:.95rem;min-width:220px;text-align:center">Loading…</span>
+      <button class="btn-secondary" id="hist-next-btn" onclick="historyNav(7)" style="font-size:1.1rem;padding:.35rem .9rem">&#8250;</button>
+      <button class="btn-primary" onclick="runHistory()">Refresh</button>
+      <span id="hist-status" style="font-size:.82rem;color:#718096;display:none"></span>
+    </div>
+
+    <div class="chart-wrap" style="margin-top:1.25rem">
+      <div class="chart-title" id="hist-chart-title">Hourly Meters vs Supply — Last 7 Days</div>
+      <div style="position:relative;height:420px"><canvas id="hist-chart"></canvas></div>
+    </div>
+  </div>
+
 </main>
 
 <script>
@@ -858,7 +875,7 @@
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "longterm", "dayplan", "whatif"].forEach(t => {
+    ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "longterm", "dayplan", "whatif", "history"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -2460,6 +2477,146 @@
         : `<span style="color:#c53030">-$${Math.round(Math.abs(savings)).toLocaleString()}</span>`;
 
       document.getElementById("wi-results").classList.remove("hidden");
+      status.style.display = "none";
+    } catch(e) {
+      status.textContent = "Error: " + e.message;
+    }
+  }
+
+  // ── Week History ─────────────────────────────────────────────────────
+
+  let _histChart  = null;
+  let _histEndDate = null;  // "YYYY-MM-DD"
+  let _histLoaded  = false;
+
+  function _histIsoYesterday() {
+    const d = new Date(Date.now() - 86400000);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  function _histAddDays(iso, n) {
+    const d = new Date(iso + 'T12:00:00');
+    d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
+  function historyNav(delta) {
+    if (!_histEndDate) _histEndDate = _histIsoYesterday();
+    const candidate = _histAddDays(_histEndDate, delta);
+    const yesterday = _histIsoYesterday();
+    _histEndDate = candidate > yesterday ? yesterday : candidate;
+    runHistory();
+  }
+
+  async function runHistory() {
+    if (!_histEndDate) _histEndDate = _histIsoYesterday();
+    const status = document.getElementById("hist-status");
+    status.textContent = "Loading…"; status.style.display = "inline";
+
+    try {
+      const res  = await fetch(`/api/history_week?end_date=${_histEndDate}`);
+      const data = await res.json();
+      if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
+
+      const fmtDate = iso => {
+        const d = new Date(iso + 'T12:00:00');
+        return d.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+      };
+      document.getElementById("hist-range-label").textContent =
+        `${fmtDate(data.start_date)} – ${fmtDate(data.end_date)}`;
+      document.getElementById("hist-chart-title").textContent =
+        `Hourly Meters vs Supply — ${fmtDate(data.start_date)} to ${fmtDate(data.end_date)}`;
+
+      const yesterday = _histIsoYesterday();
+      document.getElementById("hist-next-btn").disabled = data.end_date >= yesterday;
+
+      const pts = data.points;
+
+      // X-axis: show day label at each midnight (index % 24 === 0), blank otherwise
+      const dayLabels = [];
+      const xLabels   = pts.map((p, i) => {
+        if (p.hour === 0) {
+          const d = new Date(p.date + 'T12:00:00');
+          const lbl = d.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' });
+          dayLabels.push({ index: i, label: lbl });
+          return lbl;
+        }
+        return '';
+      });
+
+      if (_histChart) _histChart.destroy();
+      _histChart = new Chart(document.getElementById("hist-chart").getContext("2d"), {
+        type: "line",
+        data: {
+          labels: xLabels,
+          datasets: [
+            {
+              label: "Actual Load (Meters)",
+              data: pts.map(p => p.load),
+              borderColor: "rgba(229,62,62,1)",
+              backgroundColor: "transparent",
+              borderWidth: 2.5, pointRadius: 0, tension: 0.2, order: 0,
+            },
+            {
+              label: "Total Supply",
+              data: pts.map(p => p.total_supply),
+              borderColor: "rgba(49,130,206,1)",
+              backgroundColor: "rgba(49,130,206,0.06)",
+              borderWidth: 2, pointRadius: 0, tension: 0.2, fill: true, order: 1,
+            },
+          ],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: { position: "top" },
+            tooltip: {
+              callbacks: {
+                title: ctx => {
+                  const p = pts[ctx[0].dataIndex];
+                  const d = new Date(p.date + 'T12:00:00');
+                  return `${p.dow}  ${d.toLocaleDateString('en-US',{month:'short',day:'numeric'})}  HE ${p.hour + 1}`;
+                },
+                label: ctx => {
+                  const v = ctx.parsed.y;
+                  return v != null
+                    ? ` ${ctx.dataset.label}: ${Math.round(v).toLocaleString()} kW`
+                    : ` ${ctx.dataset.label}: —`;
+                },
+                afterBody: ctx => {
+                  const p = pts[ctx[0].dataIndex];
+                  if (p.load == null || p.total_supply == null) return [];
+                  const gap = p.load - p.total_supply;
+                  const sign = gap > 0 ? "+" : "";
+                  return [` Gap: ${sign}${Math.round(gap).toLocaleString()} kW`];
+                },
+              },
+            },
+            annotation: undefined,
+          },
+          scales: {
+            x: {
+              ticks: {
+                maxRotation: 45,
+                autoSkip: false,
+                font: { size: 10 },
+                callback: (val, idx) => xLabels[idx] || null,
+              },
+              grid: {
+                color: (ctx) => xLabels[ctx.index] ? 'rgba(100,100,100,0.25)' : 'rgba(200,200,200,0.15)',
+                lineWidth: (ctx) => xLabels[ctx.index] ? 1.5 : 0.5,
+              },
+            },
+            y: {
+              title: { display: true, text: "kW" },
+              beginAtZero: false,
+              ticks: { callback: v => Math.round(v).toLocaleString() },
+            },
+          },
+        },
+      });
+
       status.style.display = "none";
     } catch(e) {
       status.textContent = "Error: " + e.message;

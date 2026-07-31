@@ -1885,6 +1885,107 @@ async def save_availability(payload: dict):
     return {"ok": True, "timestamp": now.isoformat(), "name": name}
 
 
+@app.get("/api/history_week")
+async def history_week(
+    end_date: str = Query(default=None, description="YYYY-MM-DD, defaults to yesterday"),
+):
+    """7 days of hourly actual load vs supply, ending at end_date (default: yesterday)."""
+    tz       = ZoneInfo("America/Denver")
+    yesterday = (datetime.now(tz) - timedelta(days=1)).date()
+
+    if end_date:
+        try:
+            ed = date.fromisoformat(end_date)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+        if ed > yesterday:
+            ed = yesterday
+    else:
+        ed = yesterday
+
+    sd = ed - timedelta(days=6)
+
+    # UAMPS historical data — keyed {date_str: {om_hour: kw}}
+    uamps_hist: dict = {}
+    try:
+        u_path = os.path.join(_BASE_DIR, "data", "uamps_schedule.csv")
+        if os.path.exists(u_path):
+            u_df = pd.read_csv(u_path)
+            _sub = [c for c in ["crsp","hunter","provo_riv","mr","pv_wind","veyo","olmsted"]
+                    if c in u_df.columns]
+            if _sub:
+                u_df["_uamps"] = u_df[_sub].apply(pd.to_numeric, errors="coerce").fillna(0).sum(axis=1)
+                for _, row in u_df.iterrows():
+                    ds = str(row["date"])[:10]
+                    if sd.isoformat() <= ds <= ed.isoformat():
+                        om = int(row["hr"]) - 1
+                        uamps_hist.setdefault(ds, {})[om] = round(float(row["_uamps"]))
+    except Exception:
+        pass
+
+    # Solar historical data — keyed {date_str: {om_hour: kw}}
+    def _load_solar_hist(filename: str) -> dict:
+        out: dict = {}
+        try:
+            p = os.path.join(_BASE_DIR, "data", filename)
+            if not os.path.exists(p):
+                return out
+            df = pd.read_csv(p)
+            df["date"] = df["date"].astype(str)
+            df["kwh"]  = pd.to_numeric(df["kwh"], errors="coerce").fillna(0)
+            for _, row in df.iterrows():
+                ds = str(row["date"])[:10]
+                if sd.isoformat() <= ds <= ed.isoformat():
+                    om = int(row["hr"]) - 1
+                    out.setdefault(ds, {})[om] = round(float(row["kwh"]))
+        except Exception:
+            pass
+        return out
+
+    rm_hist  = _load_solar_hist("red_mesa_history.csv")
+    sa_hist  = _load_solar_hist("steele_a_history.csv")
+
+    hist  = model_state["history"]
+    dow_names = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
+    points: list = []
+    d = sd
+    while d <= ed:
+        ds         = d.isoformat()
+        day_load   = hist.get(ds, {})
+        day_supply = supply_history.get(ds, {})
+        day_uamps  = uamps_hist.get(ds, {})
+        day_rm     = rm_hist.get(ds, {})
+        day_sa     = sa_hist.get(ds, {})
+        for om in range(24):
+            load_kw  = day_load.get(om)
+            sup      = day_supply.get(om, {})
+            nebo     = int(sup.get("nebo",    0) or 0)
+            h_butte  = int(sup.get("h_butte", 0) or 0)
+            px       = int(sup.get("px",      0) or 0)
+            os_      = int(sup.get("os",      0) or 0)
+            uamps_kw = day_uamps.get(om, 0)
+            rm_kw    = day_rm.get(om,    0)
+            sa_kw    = day_sa.get(om,    0)
+            total    = nebo + h_butte + px + os_ + uamps_kw + rm_kw + sa_kw
+            points.append({
+                "date":    ds,
+                "dow":     dow_names[d.weekday()],
+                "hour":    om,
+                "load":    round(load_kw) if load_kw is not None else None,
+                "nebo":    nebo,
+                "h_butte": h_butte,
+                "px":      px,
+                "os":      os_,
+                "uamps":   uamps_kw,
+                "red_mesa": rm_kw,
+                "steele_a": sa_kw,
+                "total_supply": total if total > 0 else None,
+            })
+        d += timedelta(days=1)
+
+    return {"start_date": sd.isoformat(), "end_date": ed.isoformat(), "points": points}
+
+
 @app.get("/api/longterm")
 async def longterm_forecast(
     month: int = Query(..., ge=1, le=12),
