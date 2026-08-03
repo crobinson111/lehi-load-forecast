@@ -2299,6 +2299,18 @@ async def longterm_forecast(
                             is_llh_hr = (om <= 6) or (om == 23)
                             if all_day or (not is_sun and not is_hol and is_llh_hr):
                                 total_kw += kw
+                        elif sched == "hlh":
+                            # HE 8-23 = om 7-22, Mon-Sat non-holidays
+                            if not all_day and 7 <= om <= 22:
+                                total_kw += kw
+                        elif sched == "hlh_ex_sp":
+                            # HLH excluding super peak (HE 14-21 = om 13-20)
+                            if not all_day and ((7 <= om <= 12) or (21 <= om <= 22)):
+                                total_kw += kw
+                        elif sched == "sp":
+                            # Super peak: HE 14-21 = om 13-20, Mon-Sat non-holidays
+                            if not all_day and 13 <= om <= 20:
+                                total_kw += kw
                     kw_by_hour[om] = round(total_kw / days_in_month, 1)
                 purchases.append({
                     "label": lbl, "key": key, "rate": rate,
@@ -2415,7 +2427,8 @@ async def longterm_forecast(
                 resource_mwh[p["key"]] = monthly_kwh / 1000.0
 
             def _get_rate(res: str) -> float:
-                return _pur_rates.get(res) or _res_cost(res)
+                r = _pur_rates.get(res)
+                return r if r is not None else _res_cost(res)
 
             # Step 2: cost per resource = MWh × $/MWh
             # Step 3: blended = total cost / total MWh (weighted average)
