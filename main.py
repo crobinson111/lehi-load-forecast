@@ -1666,8 +1666,64 @@ async def supply_portfolio(
                 pred = float(max(mdl.predict(build_features(om_hour + 1, w["temp_f"], w["apparent_f"], target_date))[0], 0))
                 load_by_hour[om_hour] = round(pred, 1)
 
+    # Overlay realtime actual meter data when available
+    _rt_path = os.path.join(PERSIST_DIR, "realtime_load.json")
+    if not os.path.exists(_rt_path):
+        _rt_path = os.path.join(_BASE_DIR, "data", "realtime_load.json")
+    try:
+        with open(_rt_path) as _rt_f:
+            _rt = json.load(_rt_f)
+        if _rt.get("date") == target_date:
+            for _hr_s, _kw_v in _rt.get("hours", {}).items():
+                _om = int(_hr_s) - 1
+                if 0 <= _om <= 23 and _kw_v:
+                    load_by_hour[_om] = float(_kw_v)
+    except Exception:
+        pass
+
     supply_day = supply_history.get(target_date, {})
     uamps_day  = await _uamps_get_day(dt)
+
+    # Power purchases for this date's month
+    supply_purchases: list = []
+    _pur_path_s = os.path.join(_BASE_DIR, "data", "power_purchases.csv")
+    if os.path.exists(_pur_path_s):
+        try:
+            _pur_df_s = pd.read_csv(_pur_path_s)
+            _pur_df_mo = _pur_df_s[
+                (_pur_df_s["year"].astype(int) == dt.year) &
+                (_pur_df_s["month"].astype(int) == dt.month)
+            ]
+            _sp_hols    = _wecc_holidays(dt.year)
+            _sp_is_sun  = dt.weekday() == 6
+            _sp_is_hol  = dt.isoformat() in _sp_hols
+            _sp_all_day = _sp_is_sun or _sp_is_hol
+            for _, _pr in _pur_df_mo.iterrows():
+                _lbl   = str(_pr["label"]).strip()
+                _kw    = float(_pr["mw"]) * 1000.0
+                _sched = str(_pr["schedule"]).strip().lower()
+                _key   = "pur_" + _lbl.lower().replace(" ", "_")
+                _kw_hr: dict = {}
+                for _om in range(24):
+                    if _sched == "atc":
+                        _kw_hr[_om] = _kw
+                    elif _sched == "llh":
+                        _is_llh = (_om <= 6) or (_om == 23)
+                        _kw_hr[_om] = _kw if (_sp_all_day or (not _sp_is_sun and not _sp_is_hol and _is_llh)) else 0.0
+                    elif _sched == "hlh":
+                        _kw_hr[_om] = _kw if (not _sp_all_day and 7 <= _om <= 22) else 0.0
+                    elif _sched == "hlh_ex_sp":
+                        _kw_hr[_om] = _kw if (not _sp_all_day and ((7 <= _om <= 12) or (21 <= _om <= 22))) else 0.0
+                    elif _sched == "sp":
+                        _kw_hr[_om] = _kw if (not _sp_all_day and 13 <= _om <= 20) else 0.0
+                    else:
+                        _kw_hr[_om] = 0.0
+                supply_purchases.append({
+                    "label": _lbl, "key": _key, "mw": float(_pr["mw"]),
+                    "schedule": _sched, "kw_by_hour": _kw_hr,
+                })
+        except Exception as _exc:
+            logger.warning(f"Supply: purchases load failed: {_exc}")
 
     hourly = []
     for om_hour in range(24):
@@ -1691,8 +1747,9 @@ async def supply_portfolio(
             veyo      = round(float(uhr.get("veyo",      0)), 1)
         else:
             crsp = provo_riv = veyo = 0.0
-        total = round(rm + sa + nb + hb + px + os_ + crsp + provo_riv + veyo, 1)
-        hourly.append({
+        pur_kw = sum(p["kw_by_hour"][om_hour] for p in supply_purchases)
+        total = round(rm + sa + nb + hb + px + os_ + crsp + provo_riv + veyo + pur_kw, 1)
+        h_entry = {
             "hour":      om_hour,
             "red_mesa":  rm,
             "steele_a":  sa,
@@ -1705,7 +1762,10 @@ async def supply_portfolio(
             "veyo":      veyo,
             "total":     total,
             "load":      load_by_hour.get(om_hour),
-        })
+        }
+        for p in supply_purchases:
+            h_entry[p["key"]] = p["kw_by_hour"][om_hour]
+        hourly.append(h_entry)
 
     warnings = [
         f"{SOLAR_PLANTS[k]['label']} model not ready"
@@ -1725,6 +1785,10 @@ async def supply_portfolio(
         "day_total": day_total,
         "solar_warnings": warnings,
         "uamps_available": uamps_day is not None,
+        "purchases": [
+            {"label": p["label"], "key": p["key"], "mw": p["mw"], "schedule": p["schedule"]}
+            for p in supply_purchases
+        ],
     }
 
 

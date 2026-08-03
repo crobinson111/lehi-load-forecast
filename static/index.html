@@ -1549,6 +1549,17 @@
     const genData   = data.hourly.map(h => _supplyGen[h.hour] || 0);
     const loadData  = data.hourly.map(h => h.load      ?? null);
 
+    // Update table header to include purchase columns
+    const _supplyThead = document.querySelector('#supply-table thead tr');
+    _supplyThead.querySelectorAll('.pur-th').forEach(el => el.remove());
+    const _genTh = [..._supplyThead.querySelectorAll('th')].find(th => th.textContent.trim() === 'GEN');
+    (data.purchases || []).forEach((p, i) => {
+      const th = document.createElement('th');
+      th.textContent = `${p.label} (${p.mw}MW ${p.schedule.toUpperCase()})`;
+      th.className = 'pur-th';
+      _supplyThead.insertBefore(th, _genTh);
+    });
+
     if (supplyChart) supplyChart.destroy();
     supplyChart = new Chart(document.getElementById("supply-chart").getContext("2d"), {
       type: "bar",
@@ -1564,6 +1575,11 @@
           { label: "CRSP",        data: crspData, stack: "s", backgroundColor: "rgba(160,80,80,0.82)",   yAxisID: "y" },
           { label: "Provo River", data: prvData,  stack: "s", backgroundColor: "rgba(100,160,100,0.82)", yAxisID: "y" },
           { label: "Veyo",        data: veyoData, stack: "s", backgroundColor: "rgba(180,120,60,0.82)",  yAxisID: "y" },
+          ...(data.purchases || []).map((p, i) => ({
+            label: `${p.label} (${p.mw} MW ${p.schedule.toUpperCase()})`,
+            data: data.hourly.map(h => h[p.key] || 0),
+            stack: "s", backgroundColor: _PUR_COLORS[i % _PUR_COLORS.length], yAxisID: "y",
+          })),
           { label: "GEN",         data: genData,  stack: "s", backgroundColor: "rgba(255,210,0,0.88)",   yAxisID: "y" },
           { type: "line", label: "Load",
             data: loadData, borderColor: "rgba(229,62,62,1)", backgroundColor: "rgba(229,62,62,0.08)",
@@ -1608,6 +1624,7 @@
         `<td>${h.hour + 1}</td>` +
         cell(h.red_mesa) + cell(h.steele_a) + cell(h.nebo) + cell(h.h_butte) +
         cell(h.px) + cell(h.os) + cell(h.crsp) + cell(h.provo_riv) + cell(h.veyo) +
+        (data.purchases || []).map(p => cell(h[p.key] || 0)).join("") +
         `<td style="border-left:2px solid #e2e8f0;padding:3px 6px" class="gen-td-${h.hour}"></td>` +
         `<td id="sply-tot-${h.hour}" style="border-left:2px solid #e2e8f0;font-weight:600">${Math.round(rowTotal).toLocaleString()}</td>` +
         `<td style="border-left:2px solid #fed7d7;color:#c53030">${h.load != null ? Math.round(h.load).toLocaleString() : "—"}</td>` +
