@@ -1049,7 +1049,12 @@ async def train_model() -> None:
 
         mdl = Pipeline([("scaler", StandardScaler()), ("ridge", Ridge(alpha=10.0))])
         mdl.fit(X, y, ridge__sample_weight=sample_weights)
-        r2 = float(mdl.score(X, y))
+        # Score on recent 60 days only — the decay-weighted model is tuned for
+        # recent data, so grading on 2-year-old rows gives a misleading R².
+        recent_mask = days_ago <= 60
+        score_X = X[recent_mask] if recent_mask.sum() >= 24 else X
+        score_y = y[recent_mask] if recent_mask.sum() >= 24 else y
+        r2 = float(mdl.score(score_X, score_y))
 
         # Build historical lookup: {date: {om_hour (0-23): load}}
         raw_df = load_excel_data()
@@ -1092,7 +1097,7 @@ async def _prewarm_weather_cache() -> None:
     """Fetch today + 8 days in one API call so per-day lookups hit the cache."""
     await asyncio.sleep(5)  # let other startup tasks settle first
     today_str = date.today().strftime("%Y-%m-%d")
-    end_str   = (date.today() + timedelta(days=16)).strftime("%Y-%m-%d")
+    end_str   = (date.today() + timedelta(days=14)).strftime("%Y-%m-%d")
     try:
         await fetch_weather(today_str, end_str, use_forecast_api=True)
         logger.info(f"Load weather cache pre-warmed: {today_str} → {end_str}")
