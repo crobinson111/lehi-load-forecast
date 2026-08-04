@@ -1092,7 +1092,7 @@ async def _prewarm_weather_cache() -> None:
     """Fetch today + 8 days in one API call so per-day lookups hit the cache."""
     await asyncio.sleep(5)  # let other startup tasks settle first
     today_str = date.today().strftime("%Y-%m-%d")
-    end_str   = (date.today() + timedelta(days=8)).strftime("%Y-%m-%d")
+    end_str   = (date.today() + timedelta(days=16)).strftime("%Y-%m-%d")
     try:
         await fetch_weather(today_str, end_str, use_forecast_api=True)
         logger.info(f"Load weather cache pre-warmed: {today_str} → {end_str}")
@@ -1643,16 +1643,15 @@ async def supply_portfolio(
         red_mesa_kwh = steele_a_kwh = horse_butte_kwh = {}
         weather_timed_out = True
 
-    # Load weather fetched separately so it doesn't compete with plant fetches
+    # Load weather fetched independently — don't skip even if plants timed out
     day_wx_load: dict = {}
-    if not weather_timed_out:
-        try:
-            day_wx_load = await asyncio.wait_for(
-                _safe_fetch_load_wx(target_date, dt),
-                timeout=25.0,
-            )
-        except asyncio.TimeoutError:
-            weather_timed_out = True
+    try:
+        day_wx_load = await asyncio.wait_for(
+            _safe_fetch_load_wx(target_date, dt),
+            timeout=25.0,
+        )
+    except asyncio.TimeoutError:
+        weather_timed_out = True
 
     # Load — actuals if in history, otherwise model forecast
     load_by_hour: dict = {}
