@@ -100,7 +100,7 @@ EXCEL_PATH = os.environ.get(
 
 def _load_weather_csv(url_env_key: str) -> dict:
     """Load pre-fetched training weather from a CSV URL. Returns {} if not configured."""
-    url = os.environ.get(url_env_key)
+    url = (os.environ.get(url_env_key) or "").strip()
     if not url:
         return {}
     try:
