@@ -2028,7 +2028,19 @@ async def history_week(
     rm_hist  = _load_solar_hist("red_mesa_history.csv")
     sa_hist  = _load_solar_hist("steele_a_history.csv")
 
-    hist  = model_state["history"]
+    hist = dict(model_state["history"])  # shallow copy so we can augment
+    _rh_path = os.path.join(PERSIST_DIR, "realtime_history.json")
+    if not os.path.exists(_rh_path):
+        _rh_path = os.path.join(_BASE_DIR, "data", "realtime_history.json")
+    try:
+        with open(_rh_path) as _rh_f:
+            _rh_data = json.load(_rh_f)
+        for _ds, _hrs in _rh_data.items():
+            if _ds not in hist:
+                hist[_ds] = {int(_hr) - 1: float(_kw) for _hr, _kw in _hrs.items() if _kw}
+    except Exception:
+        pass
+
     dow_names = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"]
     points: list = []
     d = sd
