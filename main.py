@@ -1670,7 +1670,22 @@ async def supply_portfolio(
                 pred = float(max(mdl.predict(build_features(om_hour + 1, w["temp_f"], w["apparent_f"], target_date))[0], 0))
                 load_by_hour[om_hour] = round(pred, 1)
 
-    # Overlay realtime actual meter data when available
+    # Overlay actuals from rolling history (recent dates not yet in training data)
+    _rh_path = os.path.join(PERSIST_DIR, "realtime_history.json")
+    if not os.path.exists(_rh_path):
+        _rh_path = os.path.join(_BASE_DIR, "data", "realtime_history.json")
+    try:
+        with open(_rh_path) as _rh_f:
+            _rh = json.load(_rh_f)
+        if target_date in _rh:
+            for _hr_s, _kw_v in _rh[target_date].items():
+                _om = int(_hr_s) - 1
+                if 0 <= _om <= 23 and _kw_v:
+                    load_by_hour[_om] = float(_kw_v)
+    except Exception:
+        pass
+
+    # Overlay today's realtime data (most current — may have more hours than history)
     _rt_path = os.path.join(PERSIST_DIR, "realtime_load.json")
     if not os.path.exists(_rt_path):
         _rt_path = os.path.join(_BASE_DIR, "data", "realtime_load.json")

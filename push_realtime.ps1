@@ -11,7 +11,7 @@ if ($LASTEXITCODE -ne 0) {
 $today = Get-Date -Format "yyyy-MM-dd"
 Push-Location $PSScriptRoot
 try {
-    git add data/realtime_load.json
+    git add data/realtime_load.json data/realtime_history.json
     git diff --staged --quiet
     if ($LASTEXITCODE -ne 0) {
         git commit -m "Realtime load update $today"

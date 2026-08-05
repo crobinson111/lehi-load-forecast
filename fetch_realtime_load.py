@@ -98,9 +98,22 @@ output = {
     "hours":   hours,
 }
 
-out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "realtime_load.json")
+data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+out_path = os.path.join(data_dir, "realtime_load.json")
 with open(out_path, "w") as f:
     json.dump(output, f)
+
+# Accumulate into rolling history so past days remain accessible
+hist_path = os.path.join(data_dir, "realtime_history.json")
+try:
+    with open(hist_path) as f:
+        history = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    history = {}
+history[output["date"]] = hours
+with open(hist_path, "w") as f:
+    json.dump(history, f)
 
 print(f"Wrote {len(hours)} hours to {out_path}")
 print(f"Hours with data: {sorted(int(k) for k in hours)}")
