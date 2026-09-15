@@ -1033,19 +1033,28 @@ async def train_model() -> None:
         # Exponential decay with 14-day half-life so the model is anchored to
         # recent actuals rather than a 2-year average.
         max_date = pd.to_datetime(train_df["date"].max())
-        days_ago = (max_date - pd.to_datetime(train_df["date"])).dt.days.values
+        train_dates = pd.to_datetime(train_df["date"])
+        days_ago = (max_date - train_dates).dt.days.values
         time_weights = np.exp(-days_ago / 14.0)
+
+        # Same-calendar-month floor: prior-year rows for the current month
+        # decay to near-zero (exp(-365/14) ≈ 1e-12), losing all seasonal shape
+        # information. Give them a floor equivalent to a 45-day-old row so the
+        # model retains the historical morning/evening profile for this month.
+        same_month = train_dates.dt.month.values == max_date.month
+        SEASONAL_FLOOR = np.exp(-45.0 / 14.0)  # ~0.04
+        seasonal_weights = np.where(same_month, np.maximum(time_weights, SEASONAL_FLOOR), time_weights)
 
         # Same-day-type multiplier: weekday rows get 5× weight when the most
         # recent training day is a weekday (and vice versa for weekends).
         # This anchors weekday forecasts to recent weekday actuals.
         max_dow = max_date.dayofweek  # 0=Mon … 6=Sun
         max_is_weekday = max_dow < 5
-        train_dow = pd.to_datetime(train_df["date"]).dt.dayofweek.values
+        train_dow = train_dates.dt.dayofweek.values
         same_type = (train_dow < 5) == max_is_weekday
         day_type_mult = np.where(same_type, 5.0, 1.0)
 
-        sample_weights = time_weights * day_type_mult
+        sample_weights = seasonal_weights * day_type_mult
 
         mdl = Pipeline([("scaler", StandardScaler()), ("ridge", Ridge(alpha=10.0))])
         mdl.fit(X, y, ridge__sample_weight=sample_weights)
