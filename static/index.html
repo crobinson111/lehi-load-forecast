@@ -306,6 +306,7 @@
     <button class="tab-btn"        id="tab-btn-longterm"        onclick="switchTab('longterm')">Long Term</button>
     <button class="tab-btn"        id="tab-btn-dayplan"         onclick="switchTab('dayplan')">Day Plan</button>
     <button class="tab-btn"        id="tab-btn-whatif"          onclick="switchTab('whatif')">PX What-If</button>
+    <button class="tab-btn"        id="tab-btn-monthtable"      onclick="switchTab('monthtable')">Monthly Table</button>
     <button class="tab-btn"        id="tab-btn-history"         onclick="switchTab('history'); if(!_histLoaded){_histLoaded=true;runHistory();}">Week History</button>
   </div>
 
@@ -603,6 +604,41 @@
     </div>
   </div>
 
+  <!-- ══════════════════════ TAB: MONTHLY TABLE ══════════════════════ -->
+  <div id="tab-monthtable" class="hidden">
+    <div class="controls">
+      <div class="field">
+        <label for="mt-month">Month</label>
+        <select id="mt-month" style="padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem">
+          <option value="1">January</option><option value="2">February</option>
+          <option value="3">March</option><option value="4">April</option>
+          <option value="5">May</option><option value="6">June</option>
+          <option value="7">July</option><option value="8">August</option>
+          <option value="9" selected>September</option><option value="10">October</option>
+          <option value="11">November</option><option value="12">December</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="mt-year">Year</label>
+        <select id="mt-year" style="padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem">
+          <option value="2026" selected>2026</option><option value="2027">2027</option>
+          <option value="2028">2028</option><option value="2029">2029</option>
+          <option value="2030">2030</option><option value="2031">2031</option>
+          <option value="2032">2032</option><option value="2033">2033</option>
+        </select>
+      </div>
+      <button class="btn-primary" onclick="runMonthTable()">Load</button>
+      <span id="mt-status" style="font-size:.82rem;color:#718096;display:none"></span>
+    </div>
+    <div id="mt-results" class="hidden" style="overflow-x:auto;margin-top:1rem">
+      <div id="mt-title" style="font-weight:600;font-size:.95rem;margin-bottom:.6rem;color:#2d3748"></div>
+      <table class="data-table" id="mt-table">
+        <thead><tr id="mt-thead-row"></tr></thead>
+        <tbody id="mt-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- ══════════════════════ TAB 8: LONG TERM PLANNING ══════════════════════ -->
   <div id="tab-longterm" class="hidden">
 
@@ -875,7 +911,7 @@
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
-    ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "longterm", "dayplan", "whatif", "history"].forEach(t => {
+    ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "longterm", "dayplan", "whatif", "monthtable", "history"].forEach(t => {
       document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
@@ -2638,6 +2674,102 @@
     } catch(e) {
       status.textContent = "Error: " + e.message;
     }
+  }
+
+  // ── Monthly Table ─────────────────────────────────────────────────────
+  async function runMonthTable() {
+    const month  = document.getElementById("mt-month").value;
+    const year   = document.getElementById("mt-year").value;
+    const status = document.getElementById("mt-status");
+    status.textContent = "Loading…";
+    status.style.display = "inline";
+    document.getElementById("mt-results").classList.add("hidden");
+    try {
+      const res  = await fetch(`/api/longterm?month=${month}&year=${year}`);
+      const data = await res.json();
+      if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
+      renderMonthTable(data);
+      status.style.display = "none";
+    } catch(e) {
+      status.textContent = "Network error";
+    }
+  }
+
+  function renderMonthTable(data) {
+    document.getElementById("mt-title").textContent = `Average hourly resources — ${data.label}`;
+
+    // Build column list: fixed resources + dynamic purchases
+    const fixedCols = [
+      { key: "nebo",         label: "Nebo" },
+      { key: "h_butte",      label: "Horse Butte" },
+      { key: "px",           label: "PX" },
+      { key: "os",           label: "OS" },
+      { key: "red_mesa",     label: "Red Mesa" },
+      { key: "steele_a",     label: "Steele A" },
+      { key: "uamps",        label: "UAMPS" },
+    ];
+    const purCols = (data.purchases || []).map(p => ({
+      key: p.key,
+      label: `${p.label} (${p.mw} MW ${p.schedule.toUpperCase()})`,
+    }));
+    const tailCols = [
+      { key: "internal_gen",  label: "Internal Gen" },
+      { key: "total_supply",  label: "Total Supply" },
+      { key: "load",          label: "Load" },
+      { key: "shortage",      label: "Shortage" },
+    ];
+    const cols = [...fixedCols, ...purCols, ...tailCols];
+
+    // Header
+    const thead = document.getElementById("mt-thead-row");
+    thead.innerHTML = "";
+    const thHE = document.createElement("th"); thHE.textContent = "HE"; thead.appendChild(thHE);
+    cols.forEach(c => {
+      const th = document.createElement("th");
+      th.textContent = c.label;
+      thead.appendChild(th);
+    });
+
+    // Rows
+    const tbody = document.getElementById("mt-tbody");
+    tbody.innerHTML = "";
+    const mw = v => v != null ? (v / 1000).toFixed(1) : "—";
+    data.hourly.forEach(h => {
+      const tr = document.createElement("tr");
+      if (h.shortage > 0) tr.style.background = "#fff5f5";
+      const tdHE = document.createElement("td");
+      tdHE.textContent = h.hour + 1;
+      tr.appendChild(tdHE);
+      cols.forEach(c => {
+        const td = document.createElement("td");
+        td.style.fontFamily = "monospace";
+        td.style.textAlign  = "right";
+        const val = h[c.key] ?? 0;
+        td.textContent = mw(val);
+        if (c.key === "shortage" && val > 0) td.style.color = "#c53030";
+        if (c.key === "load") td.style.fontWeight = "600";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+
+    // Totals row
+    const trTot = document.createElement("tr");
+    trTot.style.fontWeight = "700";
+    trTot.style.borderTop = "2px solid #cbd5e0";
+    const tdLabel = document.createElement("td"); tdLabel.textContent = "Total"; trTot.appendChild(tdLabel);
+    cols.forEach(c => {
+      const td = document.createElement("td");
+      td.style.fontFamily = "monospace";
+      td.style.textAlign  = "right";
+      const sum = data.hourly.reduce((acc, h) => acc + (h[c.key] ?? 0), 0);
+      td.textContent = mw(sum);
+      if (c.key === "shortage" && sum > 0) td.style.color = "#c53030";
+      trTot.appendChild(td);
+    });
+    tbody.appendChild(trTot);
+
+    document.getElementById("mt-results").classList.remove("hidden");
   }
 
   // ── Init ──────────────────────────────────────────────────────────────
