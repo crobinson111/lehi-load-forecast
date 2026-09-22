@@ -1006,6 +1006,31 @@ async def train_model() -> None:
         df = load_excel_data()
         logger.info(f"Loaded {len(df)} rows from {df['date'].min()} to {df['date'].max()}")
 
+        # Augment with realtime_history.json so the model learns from recent
+        # actual meter readings that haven't made it into the static spreadsheet yet.
+        _rh_path = os.path.join(PERSIST_DIR, "realtime_history.json")
+        if not os.path.exists(_rh_path):
+            _rh_path = os.path.join(_BASE_DIR, "data", "realtime_history.json")
+        try:
+            with open(_rh_path) as _rh_f:
+                _rh_data = json.load(_rh_f)
+            existing_dates = set(df["date"].unique())
+            extra_rows = []
+            for d_str, hrs in _rh_data.items():
+                if d_str in existing_dates:
+                    continue
+                for hr_str, kw in hrs.items():
+                    hr = int(hr_str)
+                    if kw and 1 <= hr <= 24:
+                        extra_rows.append({"date": d_str, "hr": hr, "load": float(kw)})
+            if extra_rows:
+                extra_df = pd.DataFrame(extra_rows)
+                df = pd.concat([df, extra_df], ignore_index=True)
+                logger.info(f"Augmented training with {len(extra_rows)} rows from realtime_history.json "
+                            f"({extra_df['date'].nunique()} dates: {extra_df['date'].min()} → {extra_df['date'].max()})")
+        except Exception as _exc:
+            logger.warning(f"Could not load realtime_history.json for training: {_exc}")
+
         # Trim to most recent TRAINING_YEARS so the model reflects current load levels
         cutoff = (pd.to_datetime(df["date"].max()) - pd.DateOffset(years=TRAINING_YEARS)).strftime("%Y-%m-%d")
         train_df = df[df["date"] >= cutoff].copy()
@@ -1017,6 +1042,17 @@ async def train_model() -> None:
             weather = await fetch_weather(train_df["date"].min(), train_df["date"].max())
         else:
             logger.info("Using pre-loaded training weather (no API call needed)")
+            # The weather CSV may not cover the most recent days that came in via
+            # realtime_history. Fetch archive weather for any gap dates.
+            all_train_dates = set(train_df["date"].unique())
+            missing_wx = sorted(all_train_dates - set(weather.keys()))
+            if missing_wx:
+                logger.info(f"Fetching archive weather for {len(missing_wx)} gap dates ({missing_wx[0]} → {missing_wx[-1]})")
+                try:
+                    gap_weather = await fetch_weather(missing_wx[0], missing_wx[-1])
+                    weather.update(gap_weather)
+                except Exception as _exc:
+                    logger.warning(f"Could not fetch gap weather: {_exc}")
 
         # Spreadsheet hr 1–24 maps to Open-Meteo hour 0–23 (hr - 1)
         train_df["om_hour"] = train_df["hr"] - 1
