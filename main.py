@@ -1229,14 +1229,24 @@ async def forecast(
         except Exception:
             day_temps = {}
 
+        mdl = model_state["model"]
         hourly = []
         for om_hour in range(24):
             load = day_hist.get(om_hour)
             wx = day_temps.get(om_hour)
+            forecast_load = None
+            if mdl is not None and wx is not None:
+                try:
+                    forecast_load = round(float(max(mdl.predict(
+                        build_features(om_hour + 1, wx["temp_f"], wx["apparent_f"], target_date)
+                    )[0], 0)), 1)
+                except Exception:
+                    pass
             hourly.append({
                 "hour": om_hour,
                 "temp_f": round(wx["temp_f"], 1) if wx else None,
                 "load": load,
+                "forecast": forecast_load,
             })
 
         loads = [h["load"] for h in hourly if h["load"] is not None]

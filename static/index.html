@@ -1046,9 +1046,11 @@
     document.getElementById("c-avg").innerHTML     = `${s.avg_load ?? "—"}<span class="card-unit"> kW</span>`;
     document.getElementById("c-peakhour").textContent = s.peak_hour != null ? fmt12(s.peak_hour) : "—";
 
-    const labels = data.hourly.map(h => fmt12(h.hour));
-    const loads  = data.hourly.map(h => h.load);
-    const temps  = data.hourly.map(h => h.temp_f);
+    const labels    = data.hourly.map(h => fmt12(h.hour));
+    const loads     = data.hourly.map(h => h.load);
+    const forecasts = data.hourly.map(h => h.forecast ?? null);
+    const temps     = data.hourly.map(h => h.temp_f);
+    const hasForecast = isHistorical && forecasts.some(v => v != null);
 
     const barColor = isHistorical
       ? { bg: "rgba(56,161,105,0.7)", border: "rgba(56,161,105,1)" }
@@ -1057,32 +1059,32 @@
     const typeLabel = isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)";
     document.getElementById("chart-title").textContent =
       isHistorical ? `Historical Report — ${data.date}` : `Load Forecast — ${data.date}`;
-    document.getElementById("load-col-header").textContent = isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)";
     // Reset live-data column from any prior render
-    document.querySelector("#hourly-table thead tr").innerHTML =
-      `<th>Hour</th><th id="load-col-header">${isHistorical ? "Actual Load (kW)" : "Forecast Load (kW)"}</th><th>Temp (°F)</th>`;
+    const theadRow = document.querySelector("#hourly-table thead tr");
+    theadRow.innerHTML = `<th>Hour</th><th>${isHistorical ? "Actual (kW)" : "Forecast (kW)"}</th>${hasForecast ? "<th>Forecast (kW)</th>" : ""}<th>Temp (°F)</th>`;
 
     const tbody = document.getElementById("hourly-tbody");
     tbody.innerHTML = "";
     data.hourly.forEach(h => {
       const tr = document.createElement("tr");
       if (h.load === s.peak_load) tr.className = "peak-row";
-      tr.innerHTML = `
-        <td>${fmt12(h.hour)}</td>
-        <td>${h.load != null ? h.load.toLocaleString() : "—"}</td>
-        <td>${h.temp_f != null ? h.temp_f + " °F" : "—"}</td>`;
+      let html = `<td>${fmt12(h.hour)}</td><td>${h.load != null ? h.load.toLocaleString() : "—"}</td>`;
+      if (hasForecast) html += `<td style="color:#2b6cb0">${h.forecast != null ? h.forecast.toLocaleString() : "—"}</td>`;
+      html += `<td>${h.temp_f != null ? h.temp_f + " °F" : "—"}</td>`;
+      tr.innerHTML = html;
       tbody.appendChild(tr);
     });
 
     if (chart) chart.destroy();
+    const datasets = [
+      { type: "bar",  label: typeLabel,   data: loads, backgroundColor: barColor.bg, borderColor: barColor.border, borderWidth: 1, yAxisID: "yLoad", order: 2 },
+    ];
+    if (hasForecast) {
+      datasets.push({ type: "line", label: "Forecast (kW)", data: forecasts, borderColor: "rgba(43,108,176,0.9)", backgroundColor: "transparent", borderWidth: 2, pointRadius: 2, tension: 0.3, fill: false, yAxisID: "yLoad", order: 1 });
+    }
+    datasets.push({ type: "line", label: "Temp (°F)", data: temps, borderColor: "#e53e3e", backgroundColor: "rgba(229,62,62,.1)", borderWidth: 2, pointRadius: 3, tension: 0.4, fill: false, yAxisID: "yTemp", order: 1 });
     chart = new Chart(document.getElementById("chart").getContext("2d"), {
-      data: {
-        labels,
-        datasets: [
-          { type: "bar",  label: typeLabel,    data: loads, backgroundColor: barColor.bg, borderColor: barColor.border, borderWidth: 1, yAxisID: "yLoad", order: 2 },
-          { type: "line", label: "Temp (°F)",  data: temps, borderColor: "#e53e3e", backgroundColor: "rgba(229,62,62,.1)", borderWidth: 2, pointRadius: 3, tension: 0.4, fill: false, yAxisID: "yTemp", order: 1 },
-        ],
-      },
+      data: { labels, datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
         interaction: { mode: "index", intersect: false },
