@@ -1046,11 +1046,13 @@
     document.getElementById("c-avg").innerHTML     = `${s.avg_load ?? "—"}<span class="card-unit"> kW</span>`;
     document.getElementById("c-peakhour").textContent = s.peak_hour != null ? fmt12(s.peak_hour) : "—";
 
-    const labels    = data.hourly.map(h => fmt12(h.hour));
-    const loads     = data.hourly.map(h => h.load);
-    const forecasts = data.hourly.map(h => h.forecast ?? null);
-    const temps     = data.hourly.map(h => h.temp_f);
-    const hasForecast = isHistorical && forecasts.some(v => v != null);
+    const labels       = data.hourly.map(h => fmt12(h.hour));
+    const loads        = data.hourly.map(h => h.load);
+    const forecasts    = data.hourly.map(h => h.forecast ?? null);
+    const temps        = data.hourly.map(h => h.temp_f);
+    const forecastTemps = data.hourly.map(h => h.forecast_temp_f ?? null);
+    const hasForecast  = isHistorical && forecasts.some(v => v != null);
+    const hasFcTemps   = isHistorical && forecastTemps.some(v => v != null);
 
     const barColor = isHistorical
       ? { bg: "rgba(56,161,105,0.7)", border: "rgba(56,161,105,1)" }
@@ -1082,7 +1084,10 @@
     if (hasForecast) {
       datasets.push({ type: "line", label: "Forecast (kW)", data: forecasts, borderColor: "rgba(43,108,176,0.9)", backgroundColor: "transparent", borderWidth: 2, pointRadius: 2, tension: 0.3, fill: false, yAxisID: "yLoad", order: 1 });
     }
-    datasets.push({ type: "line", label: "Temp (°F)", data: temps, borderColor: "#e53e3e", backgroundColor: "rgba(229,62,62,.1)", borderWidth: 2, pointRadius: 3, tension: 0.4, fill: false, yAxisID: "yTemp", order: 1 });
+    datasets.push({ type: "line", label: "Actual Temp (°F)", data: temps, borderColor: "#e53e3e", backgroundColor: "rgba(229,62,62,.1)", borderWidth: 2, pointRadius: 3, tension: 0.4, fill: false, yAxisID: "yTemp", order: 1 });
+    if (hasFcTemps) {
+      datasets.push({ type: "line", label: "Forecast Temp (°F)", data: forecastTemps, borderColor: "rgba(237,137,54,0.9)", backgroundColor: "transparent", borderWidth: 2, borderDash: [5,3], pointRadius: 2, tension: 0.4, fill: false, yAxisID: "yTemp", order: 1 });
+    }
     chart = new Chart(document.getElementById("chart").getContext("2d"), {
       data: { labels, datasets },
       options: {
@@ -1092,9 +1097,8 @@
           legend: { position: "top" },
           tooltip: { callbacks: { label: ctx => {
             const v = ctx.parsed.y;
-            return ctx.dataset.label.includes("Load")
-              ? ` Load: ${v != null ? v.toLocaleString() + " kW" : "n/a"}`
-              : ` Temp: ${v != null ? v.toFixed(1) + " °F" : "n/a"}`;
+            if (ctx.dataset.label.includes("kW")) return ` ${ctx.dataset.label}: ${v != null ? Math.round(v).toLocaleString() + " kW" : "n/a"}`;
+            return ` ${ctx.dataset.label}: ${v != null ? v.toFixed(1) + " °F" : "n/a"}`;
           }}},
         },
         scales: {

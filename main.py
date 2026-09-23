@@ -1229,11 +1229,20 @@ async def forecast(
         except Exception:
             day_temps = {}
 
+        # Forecast-API temps show what the NWP model predicted vs what actually happened
+        forecast_day_temps: dict = {}
+        try:
+            fc_weather = await fetch_weather(target_date, target_date, use_forecast_api=True)
+            forecast_day_temps = fc_weather.get(target_date, {})
+        except Exception:
+            pass
+
         mdl = model_state["model"]
         hourly = []
         for om_hour in range(24):
             load = day_hist.get(om_hour)
-            wx = day_temps.get(om_hour)
+            wx    = day_temps.get(om_hour)
+            fc_wx = forecast_day_temps.get(om_hour)
             forecast_load = None
             if mdl is not None and wx is not None:
                 try:
@@ -1245,6 +1254,7 @@ async def forecast(
             hourly.append({
                 "hour": om_hour,
                 "temp_f": round(wx["temp_f"], 1) if wx else None,
+                "forecast_temp_f": round(fc_wx["temp_f"], 1) if fc_wx else None,
                 "load": load,
                 "forecast": forecast_load,
             })
