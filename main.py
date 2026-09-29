@@ -871,10 +871,7 @@ def _px_scheduled(om_hour: int, dt: date) -> float:
 
 
 def _os_scheduled(om_hour: int, dt: date) -> float:
-    """OS fixed schedule: Mon-Sat 7am-10pm, excluding Sundays and WECC holidays."""
-    if dt in _WECC_HOLIDAYS or dt.weekday() == 6:
-        return 0.0
-    return 20000.0 if 7 <= om_hour <= 22 else 0.0
+    return 0.0
 
 
 async def _plant_hourly_kwh(plant_key: str, target_date: str, dt: date) -> dict:
