@@ -2801,11 +2801,20 @@
       })),
       { label: "Internal Gen", data: data.hourly.map(h => +(h.internal_gen / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.internal_gen, yAxisID: "y" },
       { label: "Shortage",     data: data.hourly.map(h => +(h.shortage     / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.shortage,     yAxisID: "y" },
-      { type: "line", label: "Avg Load (MW)",
+      { type: "line", label: "Predicted Load (MW)",
         data: data.hourly.map(h => +(h.load / 1000).toFixed(1)),
         borderColor: "rgba(229,62,62,1)", backgroundColor: "transparent",
         borderWidth: 2.5, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y" },
     ];
+    const _actuals = (data.actual_hourly || []);
+    if (_actuals.some(v => v != null)) {
+      chartDatasets.push({
+        type: "line", label: "Actual Avg Load (MW)",
+        data: _actuals.map(v => v != null ? +(v / 1000).toFixed(1) : null),
+        borderColor: "rgba(56,161,105,1)", backgroundColor: "transparent",
+        borderWidth: 2.5, borderDash: [6, 3], pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y",
+      });
+    }
     if (_mtChart) _mtChart.destroy();
     _mtChart = new Chart(document.getElementById("mt-chart").getContext("2d"), {
       type: "bar",

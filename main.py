@@ -2600,10 +2600,39 @@ async def longterm_forecast(
         except Exception as _exc:
             logger.warning(f"Blended cost calculation failed: {_exc}")
 
+    # ── 7. Actual hourly averages for this calendar month ────────────────
+    # Combines model_state["history"] with realtime_history.json so partial
+    # months still show as many days as are available.
+    actual_by_hour: dict = {om: [] for om in range(24)}
+    month_prefix = f"{year}-{month:02d}-"
+    _all_history = dict(model_state["history"])
+    _rh_path_lt = os.path.join(PERSIST_DIR, "realtime_history.json")
+    if not os.path.exists(_rh_path_lt):
+        _rh_path_lt = os.path.join(_BASE_DIR, "data", "realtime_history.json")
+    try:
+        with open(_rh_path_lt) as _f:
+            _rh_lt = json.load(_f)
+        for _ds, _hrs in _rh_lt.items():
+            if _ds not in _all_history:
+                _all_history[_ds] = {int(_hr) - 1: float(_kw) for _hr, _kw in _hrs.items() if _kw}
+    except Exception:
+        pass
+    for d_str, day_data in _all_history.items():
+        if not d_str.startswith(month_prefix):
+            continue
+        for om, load_val in day_data.items():
+            if load_val is not None:
+                actual_by_hour[int(om)].append(float(load_val))
+    actual_hourly = [
+        round(sum(actual_by_hour[om]) / len(actual_by_hour[om])) if actual_by_hour[om] else None
+        for om in range(24)
+    ]
+
     return {
         "month": month, "year": year,
         "label": f"{month_name} {year}",
         "hourly": hourly,
+        "actual_hourly": actual_hourly,
         "summary": {
             "avg_load": avg_load, "avg_supply": avg_supply,
             "avg_daily_shortage_mwh": avg_daily_shortage_mwh,
