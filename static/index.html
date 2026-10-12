@@ -630,12 +630,18 @@
       <button class="btn-primary" onclick="runMonthTable()">Load</button>
       <span id="mt-status" style="font-size:.82rem;color:#718096;display:none"></span>
     </div>
-    <div id="mt-results" class="hidden" style="overflow-x:auto;margin-top:1rem">
-      <div id="mt-title" style="font-weight:600;font-size:.95rem;margin-bottom:.6rem;color:#2d3748"></div>
-      <table class="data-table" id="mt-table">
-        <thead><tr id="mt-thead-row"></tr></thead>
-        <tbody id="mt-tbody"></tbody>
-      </table>
+    <div id="mt-results" class="hidden" style="margin-top:1rem">
+      <div class="chart-wrap" style="margin-bottom:1.25rem">
+        <div class="chart-title" id="mt-chart-title">Hourly Avg Load vs Resources</div>
+        <div class="chart-container" style="height:360px"><canvas id="mt-chart"></canvas></div>
+      </div>
+      <div style="overflow-x:auto">
+        <div id="mt-title" style="font-weight:600;font-size:.95rem;margin-bottom:.6rem;color:#2d3748"></div>
+        <table class="data-table" id="mt-table">
+          <thead><tr id="mt-thead-row"></tr></thead>
+          <tbody id="mt-tbody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -2683,6 +2689,8 @@
   }
 
   // ── Monthly Table ─────────────────────────────────────────────────────
+  let _mtChart = null;
+
   async function runMonthTable() {
     const month  = document.getElementById("mt-month").value;
     const year   = document.getElementById("mt-year").value;
@@ -2774,6 +2782,47 @@
       trTot.appendChild(td);
     });
     tbody.appendChild(trTot);
+
+    // ── Combo chart ──────────────────────────────────────────────────────
+    document.getElementById("mt-chart-title").textContent = `Hourly Avg Load vs Resources — ${data.label}`;
+    const chartLabels = data.hourly.map(h => h.hour + 1);
+    const chartDatasets = [
+      { label: "Nebo",      data: data.hourly.map(h => +(h.nebo      / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.nebo,         yAxisID: "y" },
+      { label: "Horse Butte",data:data.hourly.map(h => +(h.h_butte   / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.h_butte,       yAxisID: "y" },
+      { label: "PX",        data: data.hourly.map(h => +(h.px        / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.px,            yAxisID: "y" },
+      { label: "OS",        data: data.hourly.map(h => +(h.os        / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.os,            yAxisID: "y" },
+      { label: "Red Mesa",  data: data.hourly.map(h => +(h.red_mesa  / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.red_mesa,      yAxisID: "y" },
+      { label: "Steele A",  data: data.hourly.map(h => +(h.steele_a  / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.steele_a,      yAxisID: "y" },
+      { label: "UAMPS",     data: data.hourly.map(h => +(h.uamps     / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.uamps,         yAxisID: "y" },
+      ...(data.purchases || []).map((p, i) => ({
+        label: `${p.label} (${p.mw} MW ${p.schedule.toUpperCase()})`,
+        data: data.hourly.map(h => +((h[p.key] || 0) / 1000).toFixed(1)),
+        stack: "s", backgroundColor: _PUR_COLORS[i % _PUR_COLORS.length], yAxisID: "y",
+      })),
+      { label: "Internal Gen", data: data.hourly.map(h => +(h.internal_gen / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.internal_gen, yAxisID: "y" },
+      { label: "Shortage",     data: data.hourly.map(h => +(h.shortage     / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.shortage,     yAxisID: "y" },
+      { type: "line", label: "Avg Load (MW)",
+        data: data.hourly.map(h => +(h.load / 1000).toFixed(1)),
+        borderColor: "rgba(229,62,62,1)", backgroundColor: "transparent",
+        borderWidth: 2.5, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y" },
+    ];
+    if (_mtChart) _mtChart.destroy();
+    _mtChart = new Chart(document.getElementById("mt-chart").getContext("2d"), {
+      type: "bar",
+      data: { labels: chartLabels, datasets: chartDatasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          legend: { position: "top" },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y != null ? ctx.parsed.y.toLocaleString() + " MW" : "n/a"}` } },
+        },
+        scales: {
+          y: { stacked: true, title: { display: true, text: "MW" }, beginAtZero: true },
+          x: { stacked: true, title: { display: true, text: "Hour Ending" } },
+        },
+      },
+    });
 
     document.getElementById("mt-results").classList.remove("hidden");
   }
