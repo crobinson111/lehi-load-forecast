@@ -631,6 +631,7 @@
       <span id="mt-status" style="font-size:.82rem;color:#718096;display:none"></span>
     </div>
     <div id="mt-results" class="hidden" style="margin-top:1rem">
+      <div id="mt-peak-banner" style="display:none;background:#ebf8ff;border:1px solid #90cdf4;border-radius:6px;padding:.4rem 1rem;margin-bottom:.75rem;font-size:.875rem;color:#2c5282"></div>
       <div class="chart-wrap" style="margin-bottom:1.25rem">
         <div class="chart-title" id="mt-chart-title">Hourly Avg Load vs Resources</div>
         <div class="chart-container" style="height:360px"><canvas id="mt-chart"></canvas></div>
@@ -2711,6 +2712,16 @@
 
   function renderMonthTable(data) {
     document.getElementById("mt-title").textContent = `Average hourly resources — ${data.label}`;
+
+    // Historical peak banner
+    const peakBanner = document.getElementById("mt-peak-banner");
+    const hp = data.hist_peak;
+    if (hp && hp.load != null) {
+      peakBanner.textContent = `Historical ${data.month ? new Date(2000, data.month - 1).toLocaleString("default", {month:"long"}) : ""} Peak: ${hp.load.toLocaleString()} kW on ${hp.date} at ${fmt12(hp.hour)}`;
+      peakBanner.style.display = "block";
+    } else {
+      peakBanner.style.display = "none";
+    }
 
     // Build column list: fixed resources + dynamic purchases
     const fixedCols = [

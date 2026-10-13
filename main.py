@@ -2617,12 +2617,25 @@ async def longterm_forecast(
                 _all_history[_ds] = {int(_hr) - 1: float(_kw) for _hr, _kw in _hrs.items() if _kw}
     except Exception:
         pass
+    # Also scan all years for the historical calendar-month peak
+    month_str_any = f"-{month:02d}-"
+    hist_peak_val: float | None = None
+    hist_peak_date: str | None = None
+    hist_peak_hour: int | None = None
     for d_str, day_data in _all_history.items():
-        if not d_str.startswith(month_prefix):
-            continue
-        for om, load_val in day_data.items():
-            if load_val is not None:
-                actual_by_hour[int(om)].append(float(load_val))
+        is_target_year = d_str.startswith(month_prefix)
+        is_any_year    = month_str_any in d_str
+        if is_target_year:
+            for om, load_val in day_data.items():
+                if load_val is not None:
+                    actual_by_hour[int(om)].append(float(load_val))
+        if is_any_year:
+            for om, load_val in day_data.items():
+                lv = float(load_val) if load_val is not None else None
+                if lv and (hist_peak_val is None or lv > hist_peak_val):
+                    hist_peak_val  = lv
+                    hist_peak_date = d_str
+                    hist_peak_hour = int(om)
     actual_hourly = [
         round(sum(actual_by_hour[om]) / len(actual_by_hour[om])) if actual_by_hour[om] else None
         for om in range(24)
@@ -2633,6 +2646,11 @@ async def longterm_forecast(
         "label": f"{month_name} {year}",
         "hourly": hourly,
         "actual_hourly": actual_hourly,
+        "hist_peak": {
+            "load": round(hist_peak_val) if hist_peak_val else None,
+            "date": hist_peak_date,
+            "hour": hist_peak_hour,
+        },
         "summary": {
             "avg_load": avg_load, "avg_supply": avg_supply,
             "avg_daily_shortage_mwh": avg_daily_shortage_mwh,
