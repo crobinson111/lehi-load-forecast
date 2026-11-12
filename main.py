@@ -857,21 +857,44 @@ async def train_wind_model(plant_key: str) -> None:
         state["training"] = False
 
 
-def _px_scheduled(om_hour: int, dt: date) -> float:
-    """PX fixed schedule: Mon-Sat in July only, excluding WECC holidays."""
-    if dt in _WECC_HOLIDAYS or dt.month != 7 or dt.weekday() == 6:
+def _contract_scheduled(col: str, om_hour: int, dt: date) -> float:
+    """Contract volume (kW) for PX or OS from data/future_schedule.csv only.
+    Mon-Sat, excluding WECC holidays. No contract entry for the month -> 0.
+    Never falls back to historical data."""
+    if dt in _WECC_HOLIDAYS or dt.weekday() == 6:
         return 0.0
-    if 7 <= om_hour <= 12:
-        return 38210.0
-    if 13 <= om_hour <= 20:
-        return 47754.0
-    if 21 <= om_hour <= 22:
-        return 38210.0
-    return 0.0
+    path = os.path.join(_BASE_DIR, "data", "future_schedule.csv")
+    if not os.path.exists(path):
+        return 0.0
+    try:
+        fs = pd.read_csv(path)
+        fs.columns = fs.columns.str.strip().str.lower()
+        rows = fs[(fs["year"].astype(int) == dt.year) & (fs["month"].astype(int) == dt.month)]
+        total_kw = 0.0
+        hr = om_hour + 1
+        for _, row in rows.iterrows():
+            mw = pd.to_numeric(row[col], errors="coerce")
+            if pd.isna(mw):
+                continue
+            hr_str = str(row["hr"]).strip()
+            if "-" in hr_str:
+                s, e = (int(x) for x in hr_str.split("-"))
+            else:
+                s = e = int(hr_str)
+            if s <= hr <= e:
+                total_kw += float(mw) * 1000
+        return total_kw
+    except Exception as exc:
+        logger.warning(f"_contract_scheduled({col}): could not read future_schedule.csv: {exc}")
+        return 0.0
+
+
+def _px_scheduled(om_hour: int, dt: date) -> float:
+    return _contract_scheduled("px", om_hour, dt)
 
 
 def _os_scheduled(om_hour: int, dt: date) -> float:
-    return 0.0
+    return _contract_scheduled("os", om_hour, dt)
 
 
 async def _plant_hourly_kwh(plant_key: str, target_date: str, dt: date) -> dict:
@@ -2373,12 +2396,10 @@ async def longterm_forecast(
                                 nebo_by_hour[om] = nebo_kw
                 avg_nebo = nebo_by_hour
     if not avg_px:
-        same_month_dates = sup_df[sup_df["date"].astype(str).str.contains(month_str)]["date"].astype(str)
-        ref_date = same_month_dates.max() if not same_month_dates.empty else sup_df["date"].astype(str).max()
-        recent_rows = sup_df[sup_df["date"].astype(str) == ref_date].copy()
-        recent_rows["om_hour"] = recent_rows["hr"].astype(int) - 1
-        avg_px = recent_rows.set_index("om_hour")["px"].to_dict()
-        avg_os = recent_rows.set_index("om_hour")["os"].to_dict()
+        # PX and OS are contracts: no entry in future_schedule.csv means 0.
+        # Never fall back to historical PX/OS.
+        avg_px = {om: 0.0 for om in range(24)}
+        avg_os = {om: 0.0 for om in range(24)}
 
     # Red Mesa solar — load from local CSV (in repo), fall back to URL env var
     def _load_solar_csv(local_name: str, url_env: str) -> pd.DataFrame:
@@ -2784,12 +2805,10 @@ async def day_plan(
                                 nebo_by_hour[om] = nebo_kw
                 avg_nebo = nebo_by_hour
     if not avg_px:
-        same = sup_df[sup_df["date"].astype(str).str.contains(month_str)]["date"].astype(str)
-        ref  = same.max() if not same.empty else sup_df["date"].astype(str).max()
-        rec  = sup_df[sup_df["date"].astype(str) == ref].copy()
-        rec["om_hour"] = rec["hr"].astype(int) - 1
-        avg_px = rec.set_index("om_hour")["px"].to_dict()
-        avg_os = rec.set_index("om_hour")["os"].to_dict()
+        # PX and OS are contracts: no entry in future_schedule.csv means 0.
+        # Never fall back to historical PX/OS.
+        avg_px = {om: 0.0 for om in range(24)}
+        avg_os = {om: 0.0 for om in range(24)}
 
     def _load_solar_csv(local_name: str, url_env: str) -> pd.DataFrame:
         local = os.path.join(_BASE_DIR, "data", local_name)
