@@ -2230,25 +2230,45 @@ async def longterm_forecast(
     # Start with the same calendar month; step back one month at a time until we
     # have at least 14 matched days so weather anomalies don't dominate the ratio.
     history = model_state["history"]
-    prior_year = year - 1
 
-    prior_month_daily: dict = {}   # {dom: {om_hour: load}} for prior year same month
-    prior_month_str_exact = f"{prior_year}-{month:02d}-"
-    for d_str, day_data in history.items():
-        if not d_str.startswith(prior_month_str_exact):
-            continue
-        try:
-            dom = int(d_str[8:10])
-        except (ValueError, IndexError):
-            continue
-        prior_month_daily[dom] = day_data
+    # Base year: most recent year before the target year that has actuals for
+    # this calendar month (e.g. July 2028 -> July 2026 if July 2027 hasn't happened).
+    base_year = None
+    for _y in range(year - 1, year - 6, -1):
+        _pfx = f"{_y}-{month:02d}-"
+        if sum(1 for d in history if d.startswith(_pfx)) >= 20:
+            base_year = _y
+            break
+    years_ahead = (year - base_year) if base_year is not None else 1
+
+    prior_month_daily: dict = {}   # {dom: {om_hour: load}} for base year same month
+    if base_year is not None:
+        prior_month_str_exact = f"{base_year}-{month:02d}-"
+        for d_str, day_data in history.items():
+            if not d_str.startswith(prior_month_str_exact):
+                continue
+            try:
+                dom = int(d_str[8:10])
+            except (ValueError, IndexError):
+                continue
+            prior_month_daily[dom] = day_data
+
+    # YoY growth: compare same calendar day + hour vs one year earlier, starting
+    # from the target month or the latest month with actuals, whichever is
+    # earlier, and stepping back until at least 14 days are matched.
+    latest_hist = max(history) if history else None
+    anchor_yr, anchor_mo = year, month
+    if latest_hist:
+        _ly, _lm = int(latest_hist[:4]), int(latest_hist[5:7])
+        if (_ly, _lm) < (year, month):
+            anchor_yr, anchor_mo = _ly, _lm
 
     yoy_num = 0.0    # sum of current-year actuals for matched day+hour pairs
     yoy_den = 0.0    # sum of prior-year actuals for the same pairs
     yoy_days = 0
     for mo_offset in range(0, 6):
-        chk_mo = month - mo_offset
-        chk_yr = year
+        chk_mo = anchor_mo - mo_offset
+        chk_yr = anchor_yr
         while chk_mo <= 0:
             chk_mo += 12
             chk_yr -= 1
@@ -2282,6 +2302,9 @@ async def longterm_forecast(
     else:
         yoy_growth = None
 
+    # Total growth applied to the base-year actuals: one year of growth per year ahead.
+    growth_applied = round(yoy_growth ** years_ahead, 4) if yoy_growth is not None else None
+
     # ── 2. Predict load for each day × hour ──────────────────────────────
     _, days_in_month = _cal.monthrange(year, month)
     month_days = [date(year, month, d) for d in range(1, days_in_month + 1)]
@@ -2298,7 +2321,7 @@ async def longterm_forecast(
             if base is None:
                 base = {oh: sum(v.get(oh, 0.0) for v in prior_vals) / len(prior_vals)
                         for oh in range(24)}
-            d_loads = {oh: v * yoy_growth for oh, v in base.items() if v is not None}
+            d_loads = {oh: v * growth_applied for oh, v in base.items() if v is not None}
             day_hour_loads.append(d_loads)
             for oh, v in d_loads.items():
                 hour_loads[oh].append(v)
@@ -2503,6 +2526,7 @@ async def longterm_forecast(
     hourly = []
     for om in range(24):
         load     = round(sum(hour_loads[om]) / len(hour_loads[om])) if hour_loads[om] else 0
+        max_load = round(max(hour_loads[om])) if hour_loads[om] else 0
         nebo     = round(avg_nebo.get(om, 0))
         h_butte  = round(avg_h_butte.get(om, 0))
         px       = round(avg_px.get(om, 0))
@@ -2516,7 +2540,7 @@ async def longterm_forecast(
         internal_gen = min(raw_shortage, 21000)
         shortage     = raw_shortage - internal_gen
         h_entry = {
-            "hour": om, "load": load,
+            "hour": om, "load": load, "max_load": max_load,
             "nebo": nebo, "h_butte": h_butte, "px": px, "os": os_,
             "red_mesa": red_mesa, "steele_a": steele_a, "uamps": uamps,
             "internal_gen": internal_gen,
@@ -2680,6 +2704,9 @@ async def longterm_forecast(
         "pie": pie,
         "yoy_growth": yoy_growth,
         "yoy_days": yoy_days,
+        "base_year": base_year,
+        "years_ahead": years_ahead,
+        "growth_applied": growth_applied,
         "blended_cost_per_mwh": blended_cost_per_mwh,
         "cost_pie": cost_pie,
         "cost_rates": cost_rates,

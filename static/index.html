@@ -688,7 +688,7 @@
 
       <!-- 24-hour stacked chart -->
       <div class="chart-wrap">
-        <div class="chart-title" id="lt-chart-title">Hourly Avg Load vs Supply</div>
+        <div class="chart-title" id="lt-chart-title">Hourly Avg &amp; Max Load vs Supply</div>
         <div class="chart-container"><canvas id="lt-chart"></canvas></div>
       </div>
 
@@ -2032,7 +2032,7 @@
 
   function renderLongterm(data) {
     const s = data.summary;
-    document.getElementById("lt-chart-title").textContent = `Hourly Avg Load vs Supply — ${data.label}`;
+    document.getElementById("lt-chart-title").textContent = `Hourly Avg & Max Load vs Supply — ${data.label}`;
     document.getElementById("lt-avg-load").innerHTML     = `${s.avg_load.toLocaleString()}<span class="card-unit"> kW</span>`;
     document.getElementById("lt-avg-supply").innerHTML   = `${s.avg_supply.toLocaleString()}<span class="card-unit"> kW</span>`;
     document.getElementById("lt-avg-shortage").innerHTML = `${s.avg_daily_shortage_mwh.toLocaleString()}<span class="card-unit"> MWh/day</span>`;
@@ -2054,7 +2054,11 @@
       if (growth && growth !== 1.0 && days > 0) {
         const pct = ((growth - 1) * 100).toFixed(1);
         const sign = growth > 1 ? "+" : "";
-        biasNote.textContent = `Year-over-year growth applied: ${sign}${pct}% (${days} matched day${days > 1 ? "s" : ""} of same-hour actuals)`;
+        const yrs = data.years_ahead || 1;
+        const tot = data.growth_applied;
+        const totTxt = (yrs > 1 && tot) ? `, ${((tot - 1) * 100 >= 0 ? "+" : "")}${((tot - 1) * 100).toFixed(1)}% total over ${yrs} years` : "";
+        const baseTxt = data.base_year ? ` to ${data.base_year} actuals` : "";
+        biasNote.textContent = `Year-over-year growth applied${baseTxt}: ${sign}${pct}%/yr${totTxt} (${days} matched day${days > 1 ? "s" : ""} of same-hour actuals)`;
         biasNote.style.display = "block";
       } else if (growth === null || growth === undefined) {
         biasNote.textContent = "No prior-year actuals found — using model-based forecast";
@@ -2092,9 +2096,12 @@
           })),
           { label: "Internal Gen (21 MW)", data: data.hourly.map(h => h.internal_gen), stack: "s", backgroundColor: _LT_COLORS.internal_gen, yAxisID: "y" },
           { label: "Remaining Shortage",   data: data.hourly.map(h => h.shortage),     stack: "s", backgroundColor: _LT_COLORS.shortage,     yAxisID: "y" },
+          { type: "line", label: "Max Load",
+            data: data.hourly.map(h => h.max_load), borderColor: "rgba(155,44,44,1)", backgroundColor: "transparent",
+            borderWidth: 2, borderDash: [6, 4], pointRadius: 2, tension: 0.3, fill: false, yAxisID: "y", stack: "max_load" },
           { type: "line", label: "Avg Load",
             data: loadData, borderColor: "rgba(229,62,62,1)", backgroundColor: "transparent",
-            borderWidth: 2.5, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y" },
+            borderWidth: 2.5, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y", stack: "avg_load" },
         ],
       },
       options: {
@@ -2371,9 +2378,12 @@
           { label: "UAMPS",       data: hourly.map(h => h.uamps),       stack:"s", backgroundColor: _LT_COLORS.uamps },
           { label: "Internal Gen (21 MW)", data: hourly.map(h => h.internal_gen), stack:"s", backgroundColor: _LT_COLORS.internal_gen },
           { label: "Remaining Shortage",   data: hourly.map(h => h.shortage),     stack:"s", backgroundColor: _LT_COLORS.shortage },
+          { type:"line", label:"Max Load", data: hourly.map(h => h.max_load),
+            borderColor:"rgba(155,44,44,1)", backgroundColor:"transparent",
+            borderWidth:2, borderDash:[6,4], pointRadius:2, tension:0.3, fill:false, stack:"max_load" },
           { type:"line", label:"Avg Load", data: hourly.map(h => h.load),
             borderColor:"rgba(229,62,62,1)", backgroundColor:"transparent",
-            borderWidth:2.5, pointRadius:3, tension:0.3, fill:false },
+            borderWidth:2.5, pointRadius:3, tension:0.3, fill:false, stack:"avg_load" },
         ],
       },
       options: {
@@ -2410,9 +2420,12 @@
           { label: "UAMPS",       data: hourly.map(h => h.uamps),       stack:"s", backgroundColor: _LT_COLORS.uamps },
           { label: "Internal Gen (21 MW)", data: hourly.map(h => h.internal_gen), stack:"s", backgroundColor: _LT_COLORS.internal_gen },
           { label: "Remaining Shortage",   data: hourly.map(h => h.shortage),     stack:"s", backgroundColor: _LT_COLORS.shortage },
+          { type:"line", label:"Max Load", data: hourly.map(h => h.max_load),
+            borderColor:"rgba(155,44,44,1)", backgroundColor:"transparent",
+            borderWidth:2, borderDash:[6,4], pointRadius:2, tension:0.3, fill:false, stack:"max_load" },
           { type:"line", label:"Avg Load", data: hourly.map(h => h.load),
             borderColor:"rgba(229,62,62,1)", backgroundColor:"transparent",
-            borderWidth:2.5, pointRadius:3, tension:0.3, fill:false },
+            borderWidth:2.5, pointRadius:3, tension:0.3, fill:false, stack:"avg_load" },
         ],
       },
       options: {
@@ -2812,10 +2825,14 @@
       })),
       { label: "Internal Gen", data: data.hourly.map(h => +(h.internal_gen / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.internal_gen, yAxisID: "y" },
       { label: "Shortage",     data: data.hourly.map(h => +(h.shortage     / 1000).toFixed(1)), stack: "s", backgroundColor: _LT_COLORS.shortage,     yAxisID: "y" },
-      { type: "line", label: "Predicted Load (MW)",
+      { type: "line", label: "Predicted Max Load (MW)",
+        data: data.hourly.map(h => +((h.max_load || 0) / 1000).toFixed(1)),
+        borderColor: "rgba(155,44,44,1)", backgroundColor: "transparent",
+        borderWidth: 2, borderDash: [6, 4], pointRadius: 2, tension: 0.3, fill: false, yAxisID: "y", stack: "max_load" },
+      { type: "line", label: "Predicted Avg Load (MW)",
         data: data.hourly.map(h => +(h.load / 1000).toFixed(1)),
         borderColor: "rgba(229,62,62,1)", backgroundColor: "transparent",
-        borderWidth: 2.5, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y" },
+        borderWidth: 2.5, pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y", stack: "avg_load" },
     ];
     const _actuals = (data.actual_hourly || []);
     if (_actuals.some(v => v != null)) {
@@ -2823,7 +2840,7 @@
         type: "line", label: "Actual Avg Load (MW)",
         data: _actuals.map(v => v != null ? +(v / 1000).toFixed(1) : null),
         borderColor: "rgba(56,161,105,1)", backgroundColor: "transparent",
-        borderWidth: 2.5, borderDash: [6, 3], pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y",
+        borderWidth: 2.5, borderDash: [6, 3], pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y", stack: "actual_load",
       });
     }
     if (_mtChart) _mtChart.destroy();
