@@ -336,7 +336,11 @@ def load_plant_data(plant_key: str) -> pd.DataFrame:
 def _wecc_holidays(year: int) -> set:
     """Return WECC holiday date strings (YYYY-MM-DD) for the given year."""
     from datetime import date as _d
-    h = {f"{year}-01-01", f"{year}-07-04", f"{year}-12-25"}
+    h = set()
+    # Fixed-date holidays; NERC rule: a Sunday holiday is observed the following Monday
+    for _mo, _dy in ((1, 1), (7, 4), (12, 25)):
+        _fd = _d(year, _mo, _dy)
+        h.add((_fd + timedelta(days=1) if _fd.weekday() == 6 else _fd).isoformat())
     d = _d(year, 5, 31)                          # Memorial Day: last Monday of May
     while d.weekday() != 0:
         d = _d(d.year, d.month, d.day - 1)
@@ -1829,6 +1833,10 @@ async def supply_portfolio(
         except Exception as _exc:
             logger.warning(f"Supply: purchases load failed: {_exc}")
 
+    # Past days: metered PX/OS already include contract deliveries — don't add purchases again.
+    if is_historical:
+        supply_purchases = []
+
     hourly = []
     for om_hour in range(24):
         supply = supply_day.get(om_hour, {})
@@ -2836,6 +2844,37 @@ async def day_plan(
         # Never fall back to historical PX/OS.
         avg_px = {om: 0.0 for om in range(24)}
         avg_os = {om: 0.0 for om in range(24)}
+
+    # PX contracts in power_purchases.csv (labels starting "PX") for this day,
+    # added on top of any future_schedule.csv PX.
+    _pur_path_d = os.path.join(_BASE_DIR, "data", "power_purchases.csv")
+    if os.path.exists(_pur_path_d):
+        try:
+            _pd_df = pd.read_csv(_pur_path_d)
+            _pd_df = _pd_df[(_pd_df["year"].astype(int) == year) & (_pd_df["month"].astype(int) == month)
+                            & _pd_df["label"].astype(str).str.strip().str.upper().str.startswith("PX")]
+            _all_day = dt.weekday() == 6 or dt.isoformat() in _wecc_holidays(year)
+            avg_px = dict(avg_px)
+            for _, _pr in _pd_df.iterrows():
+                _kw = float(_pr["mw"]) * 1000.0
+                _sc = str(_pr["schedule"]).strip().lower()
+                for om in range(24):
+                    if _sc == "atc":
+                        on = True
+                    elif _sc == "llh":
+                        on = _all_day or om <= 6 or om == 23
+                    elif _sc == "hlh":
+                        on = not _all_day and 7 <= om <= 22
+                    elif _sc == "hlh_ex_sp":
+                        on = not _all_day and (7 <= om <= 12 or 21 <= om <= 22)
+                    elif _sc == "sp":
+                        on = not _all_day and 13 <= om <= 20
+                    else:
+                        on = False
+                    if on:
+                        avg_px[om] = avg_px.get(om, 0.0) + _kw
+        except Exception as _exc:
+            logger.warning(f"Day plan: PX purchases load failed: {_exc}")
 
     def _load_solar_csv(local_name: str, url_env: str) -> pd.DataFrame:
         local = os.path.join(_BASE_DIR, "data", local_name)

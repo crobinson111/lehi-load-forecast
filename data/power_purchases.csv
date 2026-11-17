@@ -1,7 +1,28 @@
 label,year,month,mw,rate_per_mwh,schedule
-LLH,2026,8,20,62,llh
-HLH,2026,8,40,0,hlh_ex_sp
-SP,2026,8,50,0,sp
+PX LLH,2026,8,20,62,llh
+PX HLH,2026,8,40,0,hlh_ex_sp
+PX SP,2026,8,50,0,sp
 PX LLH,2026,9,10,54,llh
 PX HLH,2026,9,40,0,hlh
 PX HLH,2026,10,10,0,hlh
+PX HLH,2026,11,9.918,38.85,hlh
+PX HLH,2026,12,20.02,47.05,hlh
+PX FLAT,2027,1,10,61.2,atc
+PX HLH,2027,1,9.976,60.05,hlh
+PX FLAT,2027,2,10,61.2,atc
+PX HLH,2027,2,5.03,48.05,hlh
+PX FLAT,2027,3,10,61.2,atc
+PX FLAT,2027,4,10,61.2,atc
+PX FLAT,2027,5,10,61.2,atc
+PX FLAT,2027,6,10,61.2,atc
+PX HLH,2027,6,10,54.8,hlh
+PX HLH Brookfield,2027,6,30,74.24,hlh
+PX LLH Brookfield,2027,6,10,67.13,llh
+PX FLAT,2027,7,10,61.2,atc
+PX HLH Brookfield,2027,7,40,74.24,hlh
+PX LLH Brookfield,2027,7,10,67.13,llh
+PX FLAT,2027,8,10,61.2,atc
+PX HLH Brookfield,2027,8,40,74.24,hlh
+PX LLH Brookfield,2027,8,10,67.13,llh
+PX FLAT,2027,9,10,61.2,atc
+PX FLAT,2027,10,10,61.2,atc
