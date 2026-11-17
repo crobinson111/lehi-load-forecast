@@ -633,8 +633,23 @@
     <div id="mt-results" class="hidden" style="margin-top:1rem">
       <div id="mt-peak-banner" style="display:none;background:#ebf8ff;border:1px solid #90cdf4;border-radius:6px;padding:.4rem 1rem;margin-bottom:.75rem;font-size:.875rem;color:#2c5282"></div>
       <div class="chart-wrap" style="margin-bottom:1.25rem">
+        <div class="chart-title" id="mt-pie-title">Resource Mix</div>
+        <div style="position:relative;height:340px"><canvas id="mt-pie-chart"></canvas></div>
+      </div>
+      <div class="chart-wrap" style="margin-bottom:1.25rem">
         <div class="chart-title" id="mt-chart-title">Hourly Avg Load vs Resources</div>
         <div class="chart-container" style="height:360px"><canvas id="mt-chart"></canvas></div>
+      </div>
+      <div class="chart-wrap" style="margin-bottom:1.25rem">
+        <div class="chart-title" id="mt-year-title">Predicted vs Actual by Month</div>
+        <div id="mt-year-status" style="font-size:.82rem;color:#718096;margin-bottom:.5rem"></div>
+        <div style="overflow-x:auto">
+          <table class="data-table" id="mt-year-table">
+            <thead><tr id="mt-year-thead"></tr></thead>
+            <tbody id="mt-year-tbody"></tbody>
+          </table>
+        </div>
+        <div style="font-size:.75rem;color:#718096;margin-top:.5rem">Load and shortage in kWh. Actual load, total cost (Energy Expense) and blended rate (Blended Cost with Generation) come from the UAMPS Power Bills workbooks. * = no bill yet, load from meters (complete months only). Actual shortage is blank until a bill figure is chosen.</div>
       </div>
       <div style="overflow-x:auto">
         <div id="mt-title" style="font-weight:600;font-size:.95rem;margin-bottom:.6rem;color:#2d3748"></div>
@@ -2704,6 +2719,80 @@
 
   // ── Monthly Table ─────────────────────────────────────────────────────
   let _mtChart = null;
+  let _mtPieChart = null;
+  const _mtYearCache = {};
+
+  async function loadYearTable(year) {
+    const status = document.getElementById("mt-year-status");
+    document.getElementById("mt-year-title").textContent = `Predicted vs Actual by Month — ${year}`;
+    try {
+      let data = _mtYearCache[year];
+      if (!data) {
+        status.textContent = "Loading all 12 months…";
+        const res = await fetch(`/api/yearly?year=${year}`);
+        data = await res.json();
+        if (!res.ok) { status.textContent = data.detail ?? "Error loading yearly table"; return; }
+        _mtYearCache[year] = data;
+      }
+      status.textContent = "";
+      renderYearTable(data);
+    } catch (e) {
+      console.error("Yearly table failed:", e);
+      status.textContent = "Could not load yearly table";
+    }
+  }
+
+  function renderYearTable(data) {
+    const num  = v => v == null ? "" : Math.round(v).toLocaleString();
+    const pct  = v => v == null ? "" : `${parseFloat(v.toFixed(2))}%`;
+    const usd  = v => v == null ? "" : "$" + Math.round(v).toLocaleString();
+    const rate = v => v == null ? "" : "$" + v.toFixed(2);
+    const div  = (a, b) => (a != null && b) ? a / b : null;
+    const cols = ["Month", "Predicted Load", "Load", "Predicted Shortage", "Shortage",
+                  "Predicted Shortage %", "Shortage %", "Predicted Total Cost", "Total Cost",
+                  "Predicted Blended Rate ($/MWh)", "Blended Rate ($/MWh)"];
+    const thead = document.getElementById("mt-year-thead");
+    while (thead.firstChild) thead.removeChild(thead.firstChild);
+    cols.forEach(c => { const th = document.createElement("th"); th.textContent = c; thead.appendChild(th); });
+
+    const tbody = document.getElementById("mt-year-tbody");
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    const addRow = (cells, bold) => {
+      const tr = document.createElement("tr");
+      if (bold) { tr.style.fontWeight = "700"; tr.style.borderTop = "2px solid #cbd5e0"; }
+      cells.forEach((v, i) => {
+        const td = document.createElement("td");
+        td.textContent = v;
+        if (i > 0) { td.style.textAlign = "right"; td.style.fontFamily = "monospace"; td.style.whiteSpace = "nowrap"; }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    };
+    const T = { pl: 0, l: 0, ps: 0, s: 0, pc: 0, c: 0, plForCost: 0, lForCost: 0, lForShort: 0, plForShort: 0 };
+    data.months.forEach(m => {
+      const pRate = div(m.pred_total_cost, m.pred_load_kwh != null ? m.pred_load_kwh / 1000 : null);
+      const aRate = m.blended_rate != null ? m.blended_rate : div(m.total_cost, m.load_kwh != null ? m.load_kwh / 1000 : null);
+      const pPct  = div(m.pred_shortage_kwh, m.pred_load_kwh);
+      const aPct  = div(m.shortage_kwh, m.load_kwh);
+      addRow([m.name, num(m.pred_load_kwh), num(m.load_kwh) + (m.load_source === "meters" ? " *" : ""), num(m.pred_shortage_kwh), num(m.shortage_kwh),
+              pPct == null ? "" : pct(pPct * 100), aPct == null ? "" : pct(aPct * 100),
+              usd(m.pred_total_cost), usd(m.total_cost), rate(pRate), rate(aRate)]);
+      if (m.pred_load_kwh != null) T.pl += m.pred_load_kwh;
+      if (m.load_kwh != null) T.l += m.load_kwh;
+      if (m.pred_shortage_kwh != null) { T.ps += m.pred_shortage_kwh; if (m.pred_load_kwh) T.plForShort += m.pred_load_kwh; }
+      if (m.shortage_kwh != null) { T.s += m.shortage_kwh; if (m.load_kwh) T.lForShort += m.load_kwh; }
+      if (m.pred_total_cost != null) { T.pc += m.pred_total_cost; if (m.pred_load_kwh) T.plForCost += m.pred_load_kwh; }
+      if (m.total_cost != null) { T.c += m.total_cost; if (m.load_kwh) T.lForCost += m.load_kwh; }
+    });
+    const any = k => data.months.some(m => m[k] != null);
+    addRow(["Total",
+      any("pred_load_kwh") ? num(T.pl) : "", any("load_kwh") ? num(T.l) : "",
+      any("pred_shortage_kwh") ? num(T.ps) : "", any("shortage_kwh") ? num(T.s) : "",
+      T.plForShort ? pct(T.ps / T.plForShort * 100) : "", T.lForShort ? pct(T.s / T.lForShort * 100) : "",
+      any("pred_total_cost") ? usd(T.pc) : "", any("total_cost") ? usd(T.c) : "",
+      T.plForCost ? rate(T.pc / (T.plForCost / 1000)) : "", T.lForCost ? rate(T.c / (T.lForCost / 1000)) : "",
+    ], true);
+  }
 
   async function runMonthTable() {
     const month  = document.getElementById("mt-month").value;
@@ -2718,6 +2807,7 @@
       if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
       renderMonthTable(data);
       status.style.display = "none";
+      loadYearTable(year);
     } catch(e) {
       status.textContent = "Network error";
     }
@@ -2843,6 +2933,51 @@
         borderWidth: 2.5, borderDash: [6, 3], pointRadius: 3, tension: 0.3, fill: false, yAxisID: "y", stack: "actual_load",
       });
     }
+    // ── Resource mix pie (share of monthly energy) ──────────────────
+    try {
+      const purs     = data.purchases || [];
+      const pieKeys  = ["nebo","h_butte","px","os","red_mesa","steele_a","uamps",
+                        ...purs.map(p => p.key), "internal_gen", "shortage"];
+      const purLbl   = Object.fromEntries(purs.map(p => [p.key, `${p.label} (${p.mw} MW ${p.schedule.toUpperCase()})`]));
+      const purClr   = Object.fromEntries(purs.map((p, i) => [p.key, _PUR_COLORS[i % _PUR_COLORS.length]]));
+      const keys     = pieKeys.filter(k => (data.pie[k] || 0) > 0);
+      const vals     = keys.map(k => data.pie[k]);
+      const total    = vals.reduce((a, b) => a + b, 0);
+      const pct      = v => total > 0 ? (v / total * 100) : 0;
+      const labels   = keys.map((k, i) => `${_LT_LABELS[k] || purLbl[k] || k} — ${pct(vals[i]).toFixed(1)}%`);
+      const colors   = keys.map(k => _LT_COLORS[k] || purClr[k] || "rgba(160,174,192,0.85)");
+      document.getElementById("mt-pie-title").textContent = `Resource Mix — ${data.label} (share of monthly energy)`;
+      const sliceLabels = {
+        id: "mtSliceLabels",
+        afterDatasetsDraw(chart) {
+          const { ctx } = chart;
+          chart.getDatasetMeta(0).data.forEach((arc, i) => {
+            const p = pct(vals[i]);
+            if (p < 4) return;
+            const pos = arc.tooltipPosition();
+            ctx.save();
+            ctx.fillStyle = "#1a202c"; ctx.font = "600 12px sans-serif";
+            ctx.textAlign = "center"; ctx.textBaseline = "middle";
+            ctx.fillText(`${p.toFixed(0)}%`, pos.x, pos.y);
+            ctx.restore();
+          });
+        },
+      };
+      if (_mtPieChart) _mtPieChart.destroy();
+      _mtPieChart = new Chart(document.getElementById("mt-pie-chart").getContext("2d"), {
+        type: "pie",
+        data: { labels, datasets: [{ data: vals, backgroundColor: colors, borderColor: "#fff", borderWidth: 1 }] },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { position: "right", labels: { font: { size: 12 }, padding: 10 } },
+            tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${(ctx.parsed * new Date(data.year, data.month, 0).getDate() / 1000).toLocaleString(undefined, {maximumFractionDigits: 0})} MWh` } },
+          },
+        },
+        plugins: [sliceLabels],
+      });
+    } catch (e) { console.error("Monthly pie failed:", e); }
+
     if (_mtChart) _mtChart.destroy();
     _mtChart = new Chart(document.getElementById("mt-chart").getContext("2d"), {
       type: "bar",

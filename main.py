@@ -2262,13 +2262,14 @@ async def longterm_forecast(
             prior_month_daily[dom] = day_data
 
     # YoY growth: compare same calendar day + hour vs one year earlier, starting
-    # from the target month or the latest month with actuals, whichever is
+    # from the month BEFORE the target month (a forecast must not use the target
+    # month's own actuals) or the latest month with actuals, whichever is
     # earlier, and stepping back until at least 14 days are matched.
     latest_hist = max(history) if history else None
-    anchor_yr, anchor_mo = year, month
+    anchor_yr, anchor_mo = (year, month - 1) if month > 1 else (year - 1, 12)
     if latest_hist:
         _ly, _lm = int(latest_hist[:4]), int(latest_hist[5:7])
-        if (_ly, _lm) < (year, month):
+        if (_ly, _lm) < (anchor_yr, anchor_mo):
             anchor_yr, anchor_mo = _ly, _lm
 
     yoy_num = 0.0    # sum of current-year actuals for matched day+hour pairs
@@ -2588,6 +2589,7 @@ async def longterm_forecast(
 
     # ── 6. Blended resource cost ──────────────────────────────────────────
     blended_cost_per_mwh = None
+    month_total_cost: float | None = None
     cost_pie:   dict = {}
     cost_rates: dict = {}
     costs_path = os.path.join(_BASE_DIR, "data", "resource_costs.csv")
@@ -2643,6 +2645,7 @@ async def longterm_forecast(
             # Step 2: cost per resource = MWh × $/MWh
             # Step 3: blended = total cost / total MWh (weighted average)
             total_cost = sum(mwh * _get_rate(res) for res, mwh in resource_mwh.items())
+            month_total_cost = round(total_cost, 2)
             total_mwh  = sum(resource_mwh.values())
             if total_mwh > 0:
                 blended_cost_per_mwh = round(total_cost / total_mwh, 2)
@@ -2710,6 +2713,9 @@ async def longterm_forecast(
             "peak_load": peak_h["load"], "peak_hour": peak_h["hour"],
         },
         "pie": pie,
+        "month_load_kwh": round(sum(sum(d.values()) for d in day_hour_loads)),
+        "month_shortage_kwh": round(sum(daily_shortages_kwh)),
+        "month_total_cost": month_total_cost,
         "yoy_growth": yoy_growth,
         "yoy_days": yoy_days,
         "base_year": base_year,
@@ -2721,6 +2727,77 @@ async def longterm_forecast(
         "purchases": [{"label": p["label"], "key": p["key"], "mw": p["mw"],
                         "rate": p["rate"], "schedule": p["schedule"]} for p in purchases],
     }
+
+
+@app.get("/api/yearly")
+async def yearly_summary(year: int = Query(..., ge=2020, le=2040)):
+    """Predicted vs actual by month for one year.
+    Predicted: the Long Term forecast for each month.
+    Actuals: data/monthly_actuals.csv, from the Power Bills workbooks' LFY Data
+    sheets (load = Total Kwh Purchased, total cost = Energy Expense, blended rate =
+    Blended Cost with Generation (actual)). Months without a bill use metered load."""
+    import calendar as _cal
+
+    # Actual metered load (load history + realtime history), complete months only
+    _all_history = dict(model_state["history"])
+    _rh = os.path.join(PERSIST_DIR, "realtime_history.json")
+    if not os.path.exists(_rh):
+        _rh = os.path.join(_BASE_DIR, "data", "realtime_history.json")
+    try:
+        with open(_rh) as _f:
+            for _ds, _hrs in json.load(_f).items():
+                if _ds not in _all_history:
+                    _all_history[_ds] = {int(_h) - 1: float(_kw) for _h, _kw in _hrs.items() if _kw}
+    except Exception:
+        pass
+
+    # Actuals from bills
+    bills: dict = {}
+    _bp = os.path.join(_BASE_DIR, "data", "monthly_actuals.csv")
+    if os.path.exists(_bp):
+        try:
+            _b = pd.read_csv(_bp)
+            for _, r in _b.iterrows():
+                if int(r["year"]) != year:
+                    continue
+                def _num(col):
+                    v = pd.to_numeric(r.get(col), errors="coerce")
+                    return float(v) if pd.notna(v) else None
+                bills[int(r["month"])] = {
+                    "load_kwh":     _num("load_kwh"),
+                    "shortage_kwh": _num("shortage_kwh"),
+                    "total_cost":   _num("total_cost"),
+                    "blended_rate": _num("blended_rate"),
+                }
+        except Exception as exc:
+            logger.warning(f"monthly_actuals.csv read failed: {exc}")
+
+    months = []
+    for m in range(1, 13):
+        row = {"month": m, "name": _cal.month_name[m]}
+        try:
+            lt = await longterm_forecast(month=m, year=year)
+            row["pred_load_kwh"]     = lt["month_load_kwh"]
+            row["pred_shortage_kwh"] = lt["month_shortage_kwh"]
+            row["pred_total_cost"]   = lt["month_total_cost"]
+        except HTTPException as exc:
+            if exc.status_code == 503:
+                raise
+            row["pred_load_kwh"] = row["pred_shortage_kwh"] = row["pred_total_cost"] = None
+        days = _cal.monthrange(year, m)[1]
+        prefix = f"{year}-{m:02d}-"
+        mdays = [d for d in _all_history if d.startswith(prefix)]
+        meter_load = (round(sum(sum(v for v in _all_history[d].values() if v) for d in mdays))
+                      if len(mdays) >= days else None)
+        b = bills.get(m, {})
+        # Bill figures take priority; meters fill load for months without a bill yet
+        row["load_kwh"]      = round(b["load_kwh"]) if b.get("load_kwh") else meter_load
+        row["load_source"]   = "bill" if b.get("load_kwh") else ("meters" if meter_load else None)
+        row["shortage_kwh"]  = b.get("shortage_kwh")
+        row["total_cost"]    = b.get("total_cost")
+        row["blended_rate"]  = b.get("blended_rate")
+        months.append(row)
+    return {"year": year, "months": months}
 
 
 @app.get("/api/dayplan")
