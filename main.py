@@ -754,8 +754,30 @@ async def train_plant_model(plant_key: str) -> None:
         state["training"] = False
 
 
-def _nebo_scheduled() -> float:
-    """Nebo fixed schedule: 10,000 kWh every hour."""
+def _nebo_scheduled(om_hour: int, dt: date) -> float:
+    """Nebo (kW) for a future hour from data/future_schedule.csv (all days, the
+    Hr range given). Falls back to the old fixed 10 MW if the month has no entry."""
+    path = os.path.join(_BASE_DIR, "data", "future_schedule.csv")
+    try:
+        fs = pd.read_csv(path)
+        fs.columns = fs.columns.str.strip().str.lower()
+        rows = fs[(fs["year"].astype(int) == dt.year) & (fs["month"].astype(int) == dt.month)]
+        hr = om_hour + 1
+        found = False
+        total_kw = 0.0
+        for _, row in rows.iterrows():
+            mw = pd.to_numeric(row.get("nebo"), errors="coerce")
+            if pd.isna(mw):
+                continue
+            found = True
+            hr_str = str(row["hr"]).strip()
+            s, e = (int(x) for x in hr_str.split("-")) if "-" in hr_str else (int(hr_str), int(hr_str))
+            if s <= hr <= e:
+                total_kw = float(mw) * 1000
+        if found:
+            return total_kw
+    except Exception as exc:
+        logger.warning(f"_nebo_scheduled: could not read future_schedule.csv: {exc}")
     return 10000.0
 
 
@@ -1848,7 +1870,7 @@ async def supply_portfolio(
             px  = round(supply.get("px",      0.0), 1)
             os_ = round(supply.get("os",      0.0), 1)
         else:
-            nb  = round(_nebo_scheduled(), 1)
+            nb  = round(_nebo_scheduled(om_hour, dt), 1)
             hb  = round(horse_butte_kwh.get(om_hour, 0.0), 1)
             px  = round(_px_scheduled(om_hour, dt), 1)
             os_ = round(_os_scheduled(om_hour, dt), 1)
