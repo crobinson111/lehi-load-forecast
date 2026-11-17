@@ -2730,7 +2730,7 @@
     const peakBanner = document.getElementById("mt-peak-banner");
     const hp = data.hist_peak;
     if (hp && hp.load != null) {
-      peakBanner.textContent = `Historical ${data.month ? new Date(2000, data.month - 1).toLocaleString("default", {month:"long"}) : ""} Peak: ${hp.load.toLocaleString()} kW on ${hp.date} at ${fmt12(hp.hour)}`;
+      peakBanner.textContent = `All-Time ${data.month ? new Date(2000, data.month - 1).toLocaleString("default", {month:"long"}) : ""} Peak: ${hp.load.toLocaleString()} kW on ${hp.date} at ${fmt12(hp.hour)}`;
       peakBanner.style.display = "block";
     } else {
       peakBanner.style.display = "none";
