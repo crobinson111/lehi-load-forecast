@@ -651,6 +651,11 @@
         </div>
         <div style="font-size:.75rem;color:#718096;margin-top:.5rem">Load and shortage in kWh. Actual load, total cost (Energy Expense) and blended rate (Blended Cost with Generation) come from the UAMPS Power Bills workbooks. * = no bill yet, load from meters (complete months only). Actual shortage is blank until a bill figure is chosen.</div>
       </div>
+      <div class="chart-wrap" style="margin-bottom:1.25rem">
+        <div class="chart-title" id="mt-peak-title">Predicted Peak &amp; Shortage by Month</div>
+        <div class="chart-container" style="height:380px"><canvas id="mt-peak-chart"></canvas></div>
+        <div style="font-size:.75rem;color:#718096;margin-top:.5rem">Peak = highest predicted hourly load in the month. Shortage = remaining shortage after internal generation. Min / max avg shortage = the hour of the day with the lowest / highest shortage, averaged over every day of the month. % shortage = monthly shortage ÷ monthly load.</div>
+      </div>
       <div style="overflow-x:auto">
         <div id="mt-title" style="font-weight:600;font-size:.95rem;margin-bottom:.6rem;color:#2d3748"></div>
         <table class="data-table" id="mt-table">
@@ -2276,22 +2281,23 @@
   let _wiCurrentPie   = null, _wiWhatifPie   = null;
 
   function getWECCHolidays(year) {
+    // NERC/WECC holidays; a Sunday fixed-date holiday is observed the following Monday
     const h = new Set();
-    h.add(`${year}-01-01`);
-    // Memorial Day: last Monday in May
-    let may = new Date(year, 4, 31);
+    const iso = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    [[0, 1], [6, 4], [11, 25]].forEach(([m, day]) => {
+      const d = new Date(year, m, day);
+      if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+      h.add(iso(d));
+    });
+    let may = new Date(year, 4, 31);                       // Memorial Day: last Monday in May
     while (may.getDay() !== 1) may.setDate(may.getDate() - 1);
-    h.add(may.toISOString().slice(0, 10));
-    h.add(`${year}-07-04`);
-    // Labor Day: first Monday in September
-    let sep = new Date(year, 8, 1);
+    h.add(iso(may));
+    let sep = new Date(year, 8, 1);                        // Labor Day: first Monday in September
     while (sep.getDay() !== 1) sep.setDate(sep.getDate() + 1);
-    h.add(sep.toISOString().slice(0, 10));
-    // Thanksgiving: fourth Thursday in November
-    let nov = new Date(year, 10, 1); let thu = 0;
+    h.add(iso(sep));
+    let nov = new Date(year, 10, 1); let thu = 0;          // Thanksgiving: fourth Thursday in November
     while (thu < 4) { if (nov.getDay() === 4) thu++; if (thu < 4) nov.setDate(nov.getDate() + 1); }
-    h.add(nov.toISOString().slice(0, 10));
-    h.add(`${year}-12-25`);
+    h.add(iso(nov));
     return h;
   }
 
@@ -2320,15 +2326,36 @@
     const spByHour   = new Array(24).fill(0);
     let highMWh = 0, lowMWh = 0, spMWh = 0;
     for (let om = 0; om < 24; om++) {
-      highByHour[om] = highDays[om] * highKW / daysInMonth;
-      lowByHour[om]  = lowDays[om]  * lowKW  / daysInMonth;
-      spByHour[om]   = spDays[om]   * spKW   / daysInMonth;
+      // Charts show the added MW in its usual (Mon-Sat) hours; energy/cost use actual days
+      highByHour[om] = (om >= 7 && om <= 22) ? highKW : 0;
+      lowByHour[om]  = (om >= 7 && om <= 22) ? 0 : lowKW;
+      spByHour[om]   = (om >= 13 && om <= 20) ? spKW : 0;
       addByHour[om]  = highByHour[om] + lowByHour[om] + spByHour[om];
       highMWh += highDays[om] * highKW / 1000;
       lowMWh  += lowDays[om]  * lowKW  / 1000;
       spMWh   += spDays[om]   * spKW   / 1000;
     }
-    return { addByHour, highByHour, lowByHour, spByHour, highMWh, lowMWh, spMWh, daysInMonth };
+    return { addByHour, highByHour, lowByHour, spByHour, highMWh, lowMWh, spMWh, daysInMonth,
+             highKW, lowKW, spKW, holidays };
+  }
+
+  // Internal gen and remaining shortage counted day by day: each day's own load and
+  // supply (from /api/longterm "days"), plus the added PX only on the days it delivers.
+  function wiDailyIgShort(days, addInfo) {
+    let igKWh = 0, shKWh = 0;
+    (days || []).forEach(d => {
+      const dow    = new Date(d.date + "T12:00:00").getDay();
+      const allLow = dow === 0 || addInfo.holidays.has(d.date);
+      for (let om = 0; om < 24; om++) {
+        let add = 0;
+        if (!allLow && om >= 7 && om <= 22) add += addInfo.highKW; else add += addInfo.lowKW;
+        if (!allLow && om >= 13 && om <= 20) add += addInfo.spKW;
+        const raw = Math.max(0, d.load[om] - (d.supply[om] + add));
+        const ig  = Math.min(raw, 21000);
+        igKWh += ig; shKWh += raw - ig;
+      }
+    });
+    return { igMWh: igKWh / 1000, shMWh: shKWh / 1000 };
   }
 
   function wiComputeWhatifHourly(baseHourly, addInfo) {
@@ -2349,12 +2376,11 @@
 
   // Builds the what-if cost pie: start from base, override internal_gen/shortage,
   // add two new PX slices. UAMPS sub-resources are unchanged so they carry through.
-  function wiComputeCostPie(baseCostPie, costRates, wiHourly, addInfo, highRate, lowRate, spRate, daysInMonth) {
+  function wiComputeCostPie(baseCostPie, costRates, days, addInfo, highRate, lowRate, spRate) {
     const costPie = { ...baseCostPie };
-    const igMwh   = wiHourly.reduce((s, h) => s + (h.internal_gen || 0), 0) * daysInMonth / 1000;
+    const { igMWh: igMwh, shMWh: shMwh } = wiDailyIgShort(days, addInfo);
     const igCost  = Math.round(igMwh * (costRates.internal_gen || 0));
     if (igCost > 0) costPie.internal_gen = igCost; else delete costPie.internal_gen;
-    const shMwh   = wiHourly.reduce((s, h) => s + (h.shortage || 0), 0) * daysInMonth / 1000;
     const shCost  = Math.round(shMwh * (costRates.shortage || 0));
     if (shCost > 0) costPie.shortage = shCost; else delete costPie.shortage;
     const highCost = Math.round(addInfo.highMWh * highRate);
@@ -2523,7 +2549,7 @@
 
       // ── What-If calculation ───────────────────────────────────────
       const wiHourly  = wiComputeWhatifHourly(data.hourly, addInfo);
-      const wiCostPie = wiComputeCostPie(data.cost_pie, data.cost_rates, wiHourly, addInfo, highRate, lowRate, spRate, daysInMonth);
+      const wiCostPie = wiComputeCostPie(data.cost_pie, data.cost_rates, data.days, addInfo, highRate, lowRate, spRate);
       const wiRateMap = { ...data.cost_rates, add_px_high: highRate, add_px_low: lowRate, add_px_sp: spRate };
 
       // Blended costs
@@ -2721,6 +2747,55 @@
   let _mtChart = null;
   let _mtPieChart = null;
   const _mtYearCache = {};
+  let _mtPeakChart = null;
+
+  function renderYearPeakChart(data) {
+    try {
+      document.getElementById("mt-peak-title").textContent = `Predicted Peak & Shortage by Month — ${data.year}`;
+      const ms   = data.months;
+      const mw   = v => v == null ? null : +(v / 1000).toFixed(1);
+      const pctS = ms.map(m => (m.pred_shortage_kwh != null && m.pred_load_kwh) ? +(m.pred_shortage_kwh / m.pred_load_kwh * 100).toFixed(2) : null);
+      if (_mtPeakChart) _mtPeakChart.destroy();
+      _mtPeakChart = new Chart(document.getElementById("mt-peak-chart").getContext("2d"), {
+        type: "bar",
+        data: {
+          labels: ms.map(m => m.name.slice(0, 3)),
+          datasets: [
+            { label: "Predicted Peak (MW)", data: ms.map(m => mw(m.pred_peak_kw)),
+              backgroundColor: "rgba(229,62,62,0.75)", yAxisID: "y", order: 2 },
+            { label: "Max Avg Shortage (MW)", data: ms.map(m => mw(m.max_avg_shortage_kw)),
+              backgroundColor: "rgba(255,105,180,0.8)", yAxisID: "y", order: 2 },
+            { label: "Min Avg Shortage (MW)", data: ms.map(m => mw(m.min_avg_shortage_kw)),
+              backgroundColor: "rgba(214,158,46,0.85)", yAxisID: "y", order: 2 },
+            { type: "line", label: "% Shortage", data: pctS, yAxisID: "yPct", order: 1,
+              borderColor: "rgba(43,108,176,1)", backgroundColor: "rgba(43,108,176,1)",
+              borderWidth: 2.5, pointRadius: 4, tension: 0.25, fill: false },
+          ],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          interaction: { mode: "index", intersect: false },
+          plugins: {
+            legend: { position: "top" },
+            tooltip: { callbacks: { label: ctx => {
+              const m = ms[ctx.dataIndex], v = ctx.parsed.y;
+              if (v == null) return ` ${ctx.dataset.label}: n/a`;
+              if (ctx.dataset.yAxisID === "yPct") return ` % Shortage: ${v}%`;
+              let extra = "";
+              if (ctx.datasetIndex === 1 && m.max_avg_shortage_he) extra = ` (HE ${m.max_avg_shortage_he})`;
+              if (ctx.datasetIndex === 2 && m.min_avg_shortage_he) extra = ` (HE ${m.min_avg_shortage_he})`;
+              return ` ${ctx.dataset.label}: ${v.toLocaleString()} MW${extra}`;
+            }}},
+          },
+          scales: {
+            y:    { beginAtZero: true, title: { display: true, text: "MW" } },
+            yPct: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false },
+                    title: { display: true, text: "% Shortage" }, ticks: { callback: v => v + "%" } },
+          },
+        },
+      });
+    } catch (e) { console.error("Peak/shortage chart failed:", e); }
+  }
 
   async function loadYearTable(year) {
     const status = document.getElementById("mt-year-status");
@@ -2736,6 +2811,7 @@
       }
       status.textContent = "";
       renderYearTable(data);
+      renderYearPeakChart(data);
     } catch (e) {
       console.error("Yearly table failed:", e);
       status.textContent = "Could not load yearly table";

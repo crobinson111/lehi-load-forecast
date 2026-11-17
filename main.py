@@ -2405,8 +2405,6 @@ async def longterm_forecast(
         # Only use if at least one row has a non-empty PX or OS value
         has_values = fs_match[["px","os"]].apply(pd.to_numeric, errors="coerce").notna().any(axis=None)
         if not fs_match.empty and has_values:
-            mon_sat_count = sum(1 for d in month_days if d.weekday() != 6)
-            mon_sat_scale = mon_sat_count / days_in_month
             px_by_hour = {om: 0.0 for om in range(24)}
             os_by_hour = {om: 0.0 for om in range(24)}
             for _, row in fs_match.iterrows():
@@ -2425,8 +2423,8 @@ async def longterm_forecast(
                 for hr in range(hr_start, hr_end + 1):
                     om = hr - 1
                     if 0 <= om <= 23:
-                        px_by_hour[om] += px_kw * mon_sat_scale
-                        os_by_hour[om] += os_kw * mon_sat_scale
+                        px_by_hour[om] += px_kw   # full contract MW; Sundays handled day-by-day below
+                        os_by_hour[om] += os_kw
             avg_px = px_by_hour
             avg_os = os_by_hour
         # Nebo: override historical average with future_schedule value if provided
@@ -2517,37 +2515,29 @@ async def longterm_forecast(
                 rate     = float(pur_row["rate_per_mwh"])
                 sched    = str(pur_row["schedule"]).strip().lower()
                 key      = "pur_" + lbl.lower().replace(" ", "_")
-                kw_by_hour: dict = {}
-                for om in range(24):
-                    total_kw = 0.0
-                    for day in month_days:
-                        dow        = day.weekday()           # 0=Mon, 6=Sun
-                        is_sun     = dow == 6
-                        is_hol     = day.isoformat() in holidays
-                        all_day    = is_sun or is_hol
-                        if sched == "atc":
-                            total_kw += kw
-                        elif sched == "llh":
-                            is_llh_hr = (om <= 6) or (om == 23)
-                            if all_day or (not is_sun and not is_hol and is_llh_hr):
-                                total_kw += kw
-                        elif sched == "hlh":
-                            # HE 8-23 = om 7-22, Mon-Sat non-holidays
-                            if not all_day and 7 <= om <= 22:
-                                total_kw += kw
-                        elif sched == "hlh_ex_sp":
-                            # HLH excluding super peak (HE 14-21 = om 13-20)
-                            if not all_day and ((7 <= om <= 12) or (21 <= om <= 22)):
-                                total_kw += kw
-                        elif sched == "sp":
-                            # Super peak: HE 14-21 = om 13-20, Mon-Sat non-holidays
-                            if not all_day and 13 <= om <= 20:
-                                total_kw += kw
-                    kw_by_hour[om] = round(total_kw / days_in_month, 1)
+                def _on(om: int, all_day: bool, _sched=sched) -> bool:
+                    if _sched == "atc":
+                        return True
+                    if _sched == "llh":
+                        return all_day or om <= 6 or om == 23
+                    if _sched == "hlh":        # HE 8-23, Mon-Sat non-holidays
+                        return not all_day and 7 <= om <= 22
+                    if _sched == "hlh_ex_sp":  # HLH excluding super peak HE 14-21
+                        return not all_day and (7 <= om <= 12 or 21 <= om <= 22)
+                    if _sched == "sp":         # super peak HE 14-21, Mon-Sat non-holidays
+                        return not all_day and 13 <= om <= 20
+                    return False
+                # Charts/tables: the contracted MW in its usual (Mon-Sat) hours
+                kw_by_hour = {om: (kw if _on(om, False) else 0.0) for om in range(24)}
+                # Totals: what is actually delivered each day (Sundays/holidays)
+                kw_by_day = []
+                for day in month_days:
+                    all_day = day.weekday() == 6 or day.isoformat() in holidays
+                    kw_by_day.append({om: (kw if _on(om, all_day) else 0.0) for om in range(24)})
                 purchases.append({
                     "label": lbl, "key": key, "rate": rate,
                     "schedule": sched, "mw": float(pur_row["mw"]),
-                    "kw_by_hour": kw_by_hour,
+                    "kw_by_hour": kw_by_hour, "kw_by_day": kw_by_day,
                 })
         except Exception as _exc:
             logger.warning(f"Power purchases load failed: {_exc}")
@@ -2584,21 +2574,49 @@ async def longterm_forecast(
     # ── 5. Per-day shortage sums → average across month ───────────────────
     # Sum shortage per hour for each actual day (zeroed per hour, no cross-hour netting),
     # then average the daily totals. This is the operationally correct shortage metric.
-    supply_by_hr = {
+    # Contracts count only on the days they deliver (schedule PX/OS: Mon-Sat;
+    # purchases: their HLH/LLH/ATC day rules), so monthly totals stay exact.
+    base_by_hr = {
         om: (round(avg_nebo.get(om, 0)) + round(avg_h_butte.get(om, 0)) +
-             round(avg_px.get(om, 0))   + round(avg_os.get(om, 0)) +
              round(avg_rm.get(om, 0))   + round(avg_sa.get(om, 0)) +
-             round(avg_uamps.get(om, 0)) +
-             sum(p["kw_by_hour"][om] for p in purchases))
+             round(avg_uamps.get(om, 0)))
         for om in range(24)
     }
+    month_kwh = {"px": 0.0, "os": 0.0, "internal_gen": 0.0, "shortage": 0.0}
+    for p in purchases:
+        month_kwh[p["key"]] = 0.0
     daily_shortages_kwh: list = []
-    for d in day_hour_loads:
+    short_sum_by_hr = [0.0] * 24
+    days_detail: list = []   # per-day load and supply (before internal gen) for the What-If tab
+    for day, d in zip(month_days, day_hour_loads):
+        sched_on = day.weekday() != 6
         day_total = 0.0
+        day_supply = [0.0] * 24
         for om in range(24):
-            raw = max(0.0, d.get(om, 0.0) - supply_by_hr[om])
-            day_total += raw - min(raw, 21000.0)
+            px_kw = round(avg_px.get(om, 0)) if sched_on else 0.0
+            os_kw = round(avg_os.get(om, 0)) if sched_on else 0.0
+            month_kwh["px"] += px_kw
+            month_kwh["os"] += os_kw
+            pur = 0.0
+            for p in purchases:
+                v = p["kw_by_day"][day.day - 1][om]
+                month_kwh[p["key"]] += v
+                pur += v
+            day_supply[om] = base_by_hr[om] + px_kw + os_kw + pur
+            raw = max(0.0, d.get(om, 0.0) - day_supply[om])
+            ig = min(raw, 21000.0)
+            month_kwh["internal_gen"] += ig
+            month_kwh["shortage"] += raw - ig
+            short_sum_by_hr[om] += raw - ig
+            day_total += raw - ig
         daily_shortages_kwh.append(day_total)
+        days_detail.append({
+            "date": day.isoformat(),
+            "load": [round(d.get(om, 0.0)) for om in range(24)],
+            "supply": [round(v) for v in day_supply],
+        })
+    n_days = len(days_detail) or 1
+    avg_short_by_hr = [v / n_days for v in short_sum_by_hr]
     avg_daily_shortage_mwh = round(sum(daily_shortages_kwh) / len(daily_shortages_kwh) / 1000, 1) if daily_shortages_kwh else 0.0
 
     avg_load   = round(sum(h["load"]         for h in hourly) / 24)
@@ -2607,7 +2625,8 @@ async def longterm_forecast(
 
     _pie_keys = ["nebo", "h_butte", "px", "os", "red_mesa", "steele_a", "uamps", "internal_gen", "shortage"]
     _pie_keys += [p["key"] for p in purchases]
-    pie = {k: round(sum(h[k] for h in hourly)) for k in _pie_keys}
+    pie = {k: round(month_kwh[k] / days_in_month) if k in month_kwh else round(sum(h[k] for h in hourly))
+           for k in _pie_keys}
 
     # ── 6. Blended resource cost ──────────────────────────────────────────
     blended_cost_per_mwh = None
@@ -2634,10 +2653,12 @@ async def longterm_forecast(
             resource_mwh: dict = {}
 
             # Non-UAMPS resources — directly from hourly (includes internal_gen)
-            for res in ["nebo", "h_butte", "red_mesa", "steele_a", "px", "os",
-                        "internal_gen", "shortage"]:
+            for res in ["nebo", "h_butte", "red_mesa", "steele_a"]:
                 monthly_kwh = sum(h.get(res, 0) for h in hourly) * days_in_month
                 resource_mwh[res] = monthly_kwh / 1000.0
+            # Contracts, internal gen, shortage — actual day-by-day energy
+            for res in ["px", "os", "internal_gen", "shortage"]:
+                resource_mwh[res] = month_kwh[res] / 1000.0
 
             # UAMPS sub-resources — proportionally split hourly["uamps"] (the
             # forecasted value used in the graph) by each sub-resource's share
@@ -2657,8 +2678,7 @@ async def longterm_forecast(
             # Power purchase MWh — keyed by purchase key, rated from CSV
             _pur_rates = {p["key"]: p["rate"] for p in purchases}
             for p in purchases:
-                monthly_kwh = sum(h.get(p["key"], 0) for h in hourly) * days_in_month
-                resource_mwh[p["key"]] = monthly_kwh / 1000.0
+                resource_mwh[p["key"]] = month_kwh[p["key"]] / 1000.0
 
             def _get_rate(res: str) -> float:
                 r = _pur_rates.get(res)
@@ -2736,6 +2756,9 @@ async def longterm_forecast(
         },
         "pie": pie,
         "month_load_kwh": round(sum(sum(d.values()) for d in day_hour_loads)),
+        "month_peak_kw": max((h["max_load"] for h in hourly), default=0),
+        "avg_shortage_by_hour": [round(v) for v in avg_short_by_hr],
+        "days": days_detail,
         "month_shortage_kwh": round(sum(daily_shortages_kwh)),
         "month_total_cost": month_total_cost,
         "yoy_growth": yoy_growth,
@@ -2802,10 +2825,17 @@ async def yearly_summary(year: int = Query(..., ge=2020, le=2040)):
             row["pred_load_kwh"]     = lt["month_load_kwh"]
             row["pred_shortage_kwh"] = lt["month_shortage_kwh"]
             row["pred_total_cost"]   = lt["month_total_cost"]
+            row["pred_peak_kw"]      = lt["month_peak_kw"]
+            _ash = lt["avg_shortage_by_hour"]
+            _mn, _mx = min(range(24), key=lambda i: _ash[i]), max(range(24), key=lambda i: _ash[i])
+            row["min_avg_shortage_kw"], row["min_avg_shortage_he"] = _ash[_mn], _mn + 1
+            row["max_avg_shortage_kw"], row["max_avg_shortage_he"] = _ash[_mx], _mx + 1
         except HTTPException as exc:
             if exc.status_code == 503:
                 raise
             row["pred_load_kwh"] = row["pred_shortage_kwh"] = row["pred_total_cost"] = None
+            row["pred_peak_kw"] = row["min_avg_shortage_kw"] = row["max_avg_shortage_kw"] = None
+            row["min_avg_shortage_he"] = row["max_avg_shortage_he"] = None
         days = _cal.monthrange(year, m)[1]
         prefix = f"{year}-{m:02d}-"
         mdays = [d for d in _all_history if d.startswith(prefix)]
