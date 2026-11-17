@@ -653,7 +653,9 @@
       </div>
       <div class="chart-wrap" style="margin-bottom:1.25rem">
         <div class="chart-title" id="mt-peak-title">Predicted Peak &amp; Shortage by Month</div>
-        <div class="chart-container" style="height:380px"><canvas id="mt-peak-chart"></canvas></div>
+        <div class="chart-container" style="height:380px;position:relative"><canvas id="mt-peak-chart"></canvas>
+          <div id="mt-sun-inset" style="position:absolute;top:44px;left:64px;width:min(30%,320px);height:120px;background:rgba(255,255,255,0.93);border:1px solid #cbd5e0;border-radius:6px;padding:4px 6px;box-shadow:0 1px 3px rgba(0,0,0,0.08)"><canvas id="mt-sun-chart"></canvas></div>
+        </div>
         <div style="overflow-x:auto;margin-top:1rem">
           <table class="data-table" id="mt-peak-table">
             <thead><tr id="mt-peak-thead"></tr></thead>
@@ -2754,6 +2756,7 @@
   let _mtPieChart = null;
   const _mtYearCache = {};
   let _mtPeakChart = null;
+  let _mtSunChart = null;
 
   function renderYearPeakTable(data) {
     const ms   = data.months;
@@ -2763,7 +2766,8 @@
                       ? `${(m.pred_shortage_kwh / m.pred_load_kwh * 100).toFixed(2)}%` : "";
     const cols = ["Month", "Predicted Peak (MW)", "% Shortage",
                   "HLH Min Avg Shortage (MW)", "HLH Min Hour", "HLH Max Avg Shortage (MW)", "HLH Max Hour",
-                  "LLH Min Avg Shortage (MW)", "LLH Min Hour", "LLH Max Avg Shortage (MW)", "LLH Max Hour"];
+                  "Mon-Sat LLH Min Avg Shortage (MW)", "Mon-Sat LLH Min Hour", "Mon-Sat LLH Max Avg Shortage (MW)", "Mon-Sat LLH Max Hour",
+                  "Sun/Holiday Min Avg Shortage (MW)", "Sun/Holiday Min Hour", "Sun/Holiday Max Avg Shortage (MW)", "Sun/Holiday Max Hour"];
     const thead = document.getElementById("mt-peak-thead");
     while (thead.firstChild) thead.removeChild(thead.firstChild);
     cols.forEach(c => { const th = document.createElement("th"); th.textContent = c; thead.appendChild(th); });
@@ -2782,7 +2786,8 @@
     };
     ms.forEach(m => addRow([m.name, mw(m.pred_peak_kw), pct(m),
                             mw(m.hlh_min_kw), he(m.hlh_min_he), mw(m.hlh_max_kw), he(m.hlh_max_he),
-                            mw(m.llh_min_kw), he(m.llh_min_he), mw(m.llh_max_kw), he(m.llh_max_he)]));
+                            mw(m.llh_min_kw), he(m.llh_min_he), mw(m.llh_max_kw), he(m.llh_max_he),
+                            mw(m.sunhol_min_kw), he(m.sunhol_min_he), mw(m.sunhol_max_kw), he(m.sunhol_max_he)]));
     // Year row: highest peak, overall % shortage, lowest / highest monthly values
     const ok = ms.filter(m => m.pred_peak_kw != null);
     if (ok.length) {
@@ -2795,7 +2800,8 @@
       addRow([`Year ${data.year}`, `${mw(pk.pred_peak_kw)} (${pk.name.slice(0, 3)})`,
               ld ? `${(sh / ld * 100).toFixed(2)}%` : "",
               ...yr(lo("hlh_min_kw"), "hlh_min_kw", "hlh_min_he"), ...yr(hi("hlh_max_kw"), "hlh_max_kw", "hlh_max_he"),
-              ...yr(lo("llh_min_kw"), "llh_min_kw", "llh_min_he"), ...yr(hi("llh_max_kw"), "llh_max_kw", "llh_max_he")], true);
+              ...yr(lo("llh_min_kw"), "llh_min_kw", "llh_min_he"), ...yr(hi("llh_max_kw"), "llh_max_kw", "llh_max_he"),
+              ...yr(lo("sunhol_min_kw"), "sunhol_min_kw", "sunhol_min_he"), ...yr(hi("sunhol_max_kw"), "sunhol_max_kw", "sunhol_max_he")], true);
     }
   }
 
@@ -2838,13 +2844,53 @@
             }}},
           },
           scales: {
-            y:    { beginAtZero: true, title: { display: true, text: "MW" } },
-            yPct: { beginAtZero: true, position: "right", grid: { drawOnChartArea: false },
+            // headroom so the Sunday/holiday inset in the top-left corner doesn't cover the bars
+            y:    { beginAtZero: true, title: { display: true, text: "MW" },
+                    suggestedMax: Math.max(0, ...ms.map(m => mw(m.pred_peak_kw) || 0)) * 1.45 },
+            yPct: { beginAtZero: true, position: "right", suggestedMax: Math.max(0, ...pctS.map(v => v || 0)) * 1.3, grid: { drawOnChartArea: false },
                     title: { display: true, text: "% Shortage" }, ticks: { callback: v => v + "%" } },
           },
         },
       });
     } catch (e) { console.error("Peak/shortage chart failed:", e); }
+    try { renderSunInset(data); } catch (e) { console.error("Sunday inset chart failed:", e); }
+  }
+
+  // Mini chart inset in the peak chart's top-left corner: Sunday/holiday min & max avg shortage
+  function renderSunInset(data) {
+    const ms = data.months;
+    const mw = v => v == null ? null : +(v / 1000).toFixed(1);
+    if (_mtSunChart) _mtSunChart.destroy();
+    _mtSunChart = new Chart(document.getElementById("mt-sun-chart").getContext("2d"), {
+      type: "bar",
+      data: {
+        labels: ms.map(m => m.name.slice(0, 1)),
+        datasets: [
+          { label: "Max", data: ms.map(m => mw(m.sunhol_max_kw)), backgroundColor: "rgba(255,105,180,0.8)" },
+          { label: "Min", data: ms.map(m => mw(m.sunhol_min_kw)), backgroundColor: "rgba(214,158,46,0.85)" },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          title: { display: true, text: "Sun/Holiday Avg Shortage (MW)", font: { size: 11, weight: "600" }, padding: { top: 0, bottom: 2 } },
+          legend: { display: true, position: "top", labels: { boxWidth: 8, font: { size: 9 }, padding: 6 } },
+          tooltip: { callbacks: {
+            title: items => ms[items[0].dataIndex].name,
+            label: ctx => {
+              const m = ms[ctx.dataIndex], v = ctx.parsed.y;
+              const h = ctx.datasetIndex === 0 ? m.sunhol_max_he : m.sunhol_min_he;
+              return v == null ? ` ${ctx.dataset.label}: n/a` : ` ${ctx.dataset.label}: ${v} MW${h ? ` (HE ${h})` : ""}`;
+            },
+          }},
+        },
+        scales: {
+          x: { ticks: { font: { size: 9 }, autoSkip: false, maxRotation: 0 }, grid: { display: false } },
+          y: { beginAtZero: true, ticks: { font: { size: 9 }, maxTicksLimit: 4 } },
+        },
+      },
+    });
   }
 
   async function loadYearTable(year) {

@@ -2587,10 +2587,12 @@ async def longterm_forecast(
         month_kwh[p["key"]] = 0.0
     daily_shortages_kwh: list = []
     short_sum_by_hr = [0.0] * 24
-    # HLH (HE 8-23 Mon-Sat non-holiday) vs LLH (everything else) average shortage by hour
+    # Average shortage by hour in three buckets: HLH (HE 8-23 Mon-Sat non-holiday),
+    # Mon-Sat LLH (HE 1-7 & 24 Mon-Sat non-holiday), and Sunday/holiday (all hours)
     _hol_lt = _wecc_holidays(year)
     hl_sum, hl_cnt = [0.0] * 24, [0] * 24
     ll_sum, ll_cnt = [0.0] * 24, [0] * 24
+    sh_sum, sh_cnt = [0.0] * 24, [0] * 24
     days_detail: list = []   # per-day load and supply (before internal gen) for the What-If tab
     for day, d in zip(month_days, day_hour_loads):
         sched_on = day.weekday() != 6
@@ -2613,7 +2615,9 @@ async def longterm_forecast(
             month_kwh["internal_gen"] += ig
             month_kwh["shortage"] += raw - ig
             short_sum_by_hr[om] += raw - ig
-            if not lowday and 7 <= om <= 22:
+            if lowday:
+                sh_sum[om] += raw - ig; sh_cnt[om] += 1
+            elif 7 <= om <= 22:
                 hl_sum[om] += raw - ig; hl_cnt[om] += 1
             else:
                 ll_sum[om] += raw - ig; ll_cnt[om] += 1
@@ -2769,6 +2773,7 @@ async def longterm_forecast(
         "avg_shortage_by_hour": [round(v) for v in avg_short_by_hr],
         "avg_shortage_hlh_by_hour": [round(hl_sum[i] / hl_cnt[i]) if hl_cnt[i] else None for i in range(24)],
         "avg_shortage_llh_by_hour": [round(ll_sum[i] / ll_cnt[i]) if ll_cnt[i] else None for i in range(24)],
+        "avg_shortage_sunhol_by_hour": [round(sh_sum[i] / sh_cnt[i]) if sh_cnt[i] else None for i in range(24)],
         "days": days_detail,
         "month_shortage_kwh": round(sum(daily_shortages_kwh)),
         "month_total_cost": month_total_cost,
@@ -2841,7 +2846,7 @@ async def yearly_summary(year: int = Query(..., ge=2020, le=2040)):
             _mn, _mx = min(range(24), key=lambda i: _ash[i]), max(range(24), key=lambda i: _ash[i])
             row["min_avg_shortage_kw"], row["min_avg_shortage_he"] = _ash[_mn], _mn + 1
             row["max_avg_shortage_kw"], row["max_avg_shortage_he"] = _ash[_mx], _mx + 1
-            for _cls in ("hlh", "llh"):
+            for _cls in ("hlh", "llh", "sunhol"):
                 _v = lt[f"avg_shortage_{_cls}_by_hour"]
                 _ix = [i for i in range(24) if _v[i] is not None]
                 if _ix:
