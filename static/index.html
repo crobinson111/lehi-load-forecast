@@ -2764,10 +2764,13 @@
     const he   = v => v == null ? "" : `HE ${v}`;
     const pct  = m => (m.pred_shortage_kwh != null && m.pred_load_kwh)
                       ? `${(m.pred_shortage_kwh / m.pred_load_kwh * 100).toFixed(2)}%` : "";
-    const cols = ["Month", "Predicted Peak (MW)", "% Shortage",
-                  "HLH Min Avg Shortage (MW)", "HLH Min Hour", "HLH Max Avg Shortage (MW)", "HLH Max Hour",
-                  "Mon-Sat LLH Min Avg Shortage (MW)", "Mon-Sat LLH Min Hour", "Mon-Sat LLH Max Avg Shortage (MW)", "Mon-Sat LLH Max Hour",
-                  "Sun/Holiday Min Avg Shortage (MW)", "Sun/Holiday Min Hour", "Sun/Holiday Max Avg Shortage (MW)", "Sun/Holiday Max Hour"];
+    const cols = ["Month",
+                  "HLH Min Avg Shortage (MW)", "HLH Max Avg Shortage (MW)",
+                  "Mon-Sat LLH Min Avg Shortage (MW)", "Mon-Sat LLH Max Avg Shortage (MW)",
+                  "Sun/Holiday Min Avg Shortage (MW)", "Sun/Holiday Max Avg Shortage (MW)",
+                  "Predicted Peak (MW)", "% Shortage",
+                  "HLH Min Hour", "HLH Max Hour", "Mon-Sat LLH Min Hour", "Mon-Sat LLH Max Hour",
+                  "Sun/Holiday Min Hour", "Sun/Holiday Max Hour"];
     const thead = document.getElementById("mt-peak-thead");
     while (thead.firstChild) thead.removeChild(thead.firstChild);
     cols.forEach(c => { const th = document.createElement("th"); th.textContent = c; thead.appendChild(th); });
@@ -2784,24 +2787,24 @@
       });
       tbody.appendChild(tr);
     };
-    ms.forEach(m => addRow([m.name, mw(m.pred_peak_kw), pct(m),
-                            mw(m.hlh_min_kw), he(m.hlh_min_he), mw(m.hlh_max_kw), he(m.hlh_max_he),
-                            mw(m.llh_min_kw), he(m.llh_min_he), mw(m.llh_max_kw), he(m.llh_max_he),
-                            mw(m.sunhol_min_kw), he(m.sunhol_min_he), mw(m.sunhol_max_kw), he(m.sunhol_max_he)]));
+    const K = ["hlh_min", "hlh_max", "llh_min", "llh_max", "sunhol_min", "sunhol_max"];
+    ms.forEach(m => addRow([m.name, ...K.map(k => mw(m[k + "_kw"])), mw(m.pred_peak_kw), pct(m),
+                            ...K.map(k => he(m[k + "_he"]))]));
     // Year row: highest peak, overall % shortage, lowest / highest monthly values
     const ok = ms.filter(m => m.pred_peak_kw != null);
     if (ok.length) {
       const pk  = ok.reduce((a, b) => b.pred_peak_kw > a.pred_peak_kw ? b : a);
       const lo  = k => ok.filter(m => m[k] != null).reduce((a, b) => (a == null || b[k] < a[k]) ? b : a, null);
       const hi  = k => ok.filter(m => m[k] != null).reduce((a, b) => (a == null || b[k] > a[k]) ? b : a, null);
-      const yr  = (m, k, hk) => m ? [`${mw(m[k])} (${m.name.slice(0, 3)})`, he(m[hk])] : ["", ""];
+      const pick = k => (k.endsWith("_min") ? lo : hi)(k + "_kw");   // lowest min / highest max
+      const ym  = K.map(pick);
       const sh  = ok.reduce((s, m) => s + (m.pred_shortage_kwh || 0), 0);
       const ld  = ok.reduce((s, m) => s + (m.pred_load_kwh || 0), 0);
-      addRow([`Year ${data.year}`, `${mw(pk.pred_peak_kw)} (${pk.name.slice(0, 3)})`,
+      addRow([`Year ${data.year}`,
+              ...K.map((k, i) => ym[i] ? `${mw(ym[i][k + "_kw"])} (${ym[i].name.slice(0, 3)})` : ""),
+              `${mw(pk.pred_peak_kw)} (${pk.name.slice(0, 3)})`,
               ld ? `${(sh / ld * 100).toFixed(2)}%` : "",
-              ...yr(lo("hlh_min_kw"), "hlh_min_kw", "hlh_min_he"), ...yr(hi("hlh_max_kw"), "hlh_max_kw", "hlh_max_he"),
-              ...yr(lo("llh_min_kw"), "llh_min_kw", "llh_min_he"), ...yr(hi("llh_max_kw"), "llh_max_kw", "llh_max_he"),
-              ...yr(lo("sunhol_min_kw"), "sunhol_min_kw", "sunhol_min_he"), ...yr(hi("sunhol_max_kw"), "sunhol_max_kw", "sunhol_max_he")], true);
+              ...K.map((k, i) => ym[i] ? he(ym[i][k + "_he"]) : "")], true);
     }
   }
 
