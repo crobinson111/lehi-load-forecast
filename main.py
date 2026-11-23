@@ -2646,6 +2646,7 @@ async def longterm_forecast(
     month_total_cost: float | None = None
     cost_pie:   dict = {}
     cost_rates: dict = {}
+    shortage_rate: float | None = None   # assumed $/MWh for shortage (None = no rate set)
     costs_path = os.path.join(_BASE_DIR, "data", "resource_costs.csv")
     if os.path.exists(costs_path):
         try:
@@ -2660,6 +2661,10 @@ async def longterm_forecast(
                 if not any_row.empty:
                     return float(any_row["cost_per_mwh"].iloc[0])
                 return 0.0
+
+            _sr = c_df[(c_df["resource"] == "shortage") & ((c_df["month"] == month) | c_df["month"].isna())]
+            if not _sr.empty:
+                shortage_rate = _res_cost("shortage")
 
             # Step 1: total monthly MWh per resource
             # Use exactly the same data as the resource graphs (hourly array).
@@ -2785,6 +2790,7 @@ async def longterm_forecast(
         "blended_cost_per_mwh": blended_cost_per_mwh,
         "cost_pie": cost_pie,
         "cost_rates": cost_rates,
+        "shortage_rate": shortage_rate,
         "purchases": [{"label": p["label"], "key": p["key"], "mw": p["mw"],
                         "rate": p["rate"], "schedule": p["schedule"]} for p in purchases],
     }

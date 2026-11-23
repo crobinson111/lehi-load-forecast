@@ -828,6 +828,11 @@
             <input type="number" id="wi-sp-rate" value="63" min="1" max="500" style="width:65px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
         </div>
       </div>
+      <div style="display:flex;flex-direction:column;gap:.3rem;padding:.5rem .75rem;background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px">
+        <div style="font-size:.7rem;font-weight:700;color:#c53030;text-transform:uppercase;letter-spacing:.06em">Shortage Price</div>
+        <div class="field" style="margin:0"><label for="wi-short-rate" style="font-size:.75rem">$/MWh (blank = default)</label>
+          <input type="number" id="wi-short-rate" placeholder="default" min="0" max="2000" style="width:90px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
+      </div>
       <button class="btn-primary" onclick="runWhatIf()">Run Analysis</button>
       <span id="wi-status" style="font-size:.82rem;color:#718096;display:none"></span>
     </div>
@@ -870,6 +875,11 @@
         <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">Monthly Cost Savings</div>
           <div class="card-value" id="wi-cost-savings">—</div>
+        </div>
+        <div class="card" style="flex:1;min-width:170px">
+          <div class="card-label">Shortage Price (Assumed)</div>
+          <div class="card-value" id="wi-shortage-rate">—</div>
+          <div id="wi-shortage-rate-note" style="font-size:.72rem;color:#718096;margin-top:.2rem"></div>
         </div>
       </div>
 
@@ -2532,6 +2542,8 @@
     const lowRate  = parseFloat(document.getElementById("wi-low-rate").value) || 63;
     const spMW     = parseFloat(document.getElementById("wi-sp-mw").value) || 0;
     const spRate   = parseFloat(document.getElementById("wi-sp-rate").value) || 63;
+    const shortIn  = document.getElementById("wi-short-rate").value.trim();
+    const shortUser = shortIn === "" ? null : parseFloat(shortIn);
     const highKW   = highMW * 1000;
     const lowKW    = lowMW  * 1000;
     const spKW     = spMW   * 1000;
@@ -2549,6 +2561,15 @@
       const monthNames = ["","January","February","March","April","May","June",
                           "July","August","September","October","November","December"];
 
+      // ── Shortage price: user's scenario value, else the month's default ──
+      const shortDefault = data.shortage_rate;
+      const shortRate = (shortUser != null && !isNaN(shortUser)) ? shortUser : (shortDefault || 0);
+      const shortOverride = shortUser != null && !isNaN(shortUser);
+      data.cost_rates = { ...data.cost_rates, shortage: shortRate };
+      const curShCost = Math.round((data.month_shortage_kwh || 0) / 1000 * shortRate);
+      data.cost_pie = { ...data.cost_pie };
+      if (curShCost > 0) data.cost_pie.shortage = curShCost; else delete data.cost_pie.shortage;
+
       // ── Current charts ────────────────────────────────────────────
       document.getElementById("wi-current-chart-title").textContent =
         `Current: ${monthNames[month]} ${year} — Hourly Avg Load vs Supply`;
@@ -2561,7 +2582,7 @@
       const wiRateMap = { ...data.cost_rates, add_px_high: highRate, add_px_low: lowRate, add_px_sp: spRate };
 
       // Blended costs
-      const currentBlended = data.blended_cost_per_mwh || 0;
+      const currentBlended = shortOverride ? wiBlended(data.cost_pie, data.cost_rates) : (data.blended_cost_per_mwh || 0);
       const wiBlendedVal   = wiBlended(wiCostPie, wiRateMap);
 
       // ── What-If charts ────────────────────────────────────────────
@@ -2603,6 +2624,24 @@
       document.getElementById("wi-cost-savings").innerHTML = savings >= 0
         ? `<span style="color:#276749">$${Math.round(savings).toLocaleString()}</span>`
         : `<span style="color:#c53030">-$${Math.round(Math.abs(savings)).toLocaleString()}</span>`;
+
+      // Assumed shortage price (from resource_costs.csv)
+      const srEl = document.getElementById("wi-shortage-rate");
+      const srNote = document.getElementById("wi-shortage-rate-note");
+      const dflt = shortDefault != null ? `$${shortDefault.toFixed(2)}` : "not set";
+      if (shortOverride || shortDefault != null) {
+        srEl.style.color = shortOverride ? "#2b6cb0" : "";
+        srEl.textContent = `$${shortRate.toFixed(2)}`;
+        const sp = document.createElement("span"); sp.className = "card-unit"; sp.textContent = " $/MWh";
+        srEl.appendChild(sp);
+        srNote.textContent = shortOverride
+          ? `Your scenario (default for ${monthNames[month]}: ${dflt}). Applied to current and what-if.`
+          : `Default for ${monthNames[month]}. Applied to every shortage MWh.`;
+      } else {
+        srEl.textContent = "Not set";
+        srEl.style.color = "#c53030";
+        srNote.textContent = `No shortage price for ${monthNames[month]}, so shortage is costed at $0`;
+      }
 
       document.getElementById("wi-results").classList.remove("hidden");
       status.style.display = "none";
