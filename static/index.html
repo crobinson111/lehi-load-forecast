@@ -306,6 +306,8 @@
     <button class="tab-btn"        id="tab-btn-longterm"        onclick="switchTab('longterm')">Long Term</button>
     <button class="tab-btn"        id="tab-btn-dayplan"         onclick="switchTab('dayplan')">Day Plan</button>
     <button class="tab-btn"        id="tab-btn-whatif"          onclick="switchTab('whatif')">PX What-If</button>
+    <button class="tab-btn"        id="tab-btn-wi-typical"      onclick="switchTab('wi-typical')">What-If: Typical Pool</button>
+    <button class="tab-btn"        id="tab-btn-wi-worst"        onclick="switchTab('wi-worst')">What-If: Worst Pool</button>
     <button class="tab-btn"        id="tab-btn-monthtable"      onclick="switchTab('monthtable')">Monthly Table</button>
     <button class="tab-btn"        id="tab-btn-history"         onclick="switchTab('history'); if(!_histLoaded){_histLoaded=true;runHistory();}">Week History</button>
   </div>
@@ -791,6 +793,11 @@
 
   <!-- ══════════════════════ TAB 10: PX WHAT-IF ══════════════════════ -->
   <div id="tab-whatif" class="hidden">
+    <div id="wi-scenario-banner" style="display:none;background:#fffaf0;border:1px solid #f6ad55;border-radius:6px;padding:.6rem 1rem;margin-bottom:.75rem;font-size:.85rem;color:#7b341e">
+      <div id="wi-scenario-title" style="font-weight:700;margin-bottom:.35rem"></div>
+      <div style="overflow-x:auto"><table class="data-table" id="wi-scenario-table" style="font-size:.78rem"><tbody id="wi-scenario-tbody"></tbody></table></div>
+      <div id="wi-scenario-note" style="font-size:.75rem;margin-top:.35rem"></div>
+    </div>
     <div class="controls" style="align-items:flex-end;flex-wrap:wrap;gap:.75rem">
       <div class="field">
         <label for="wi-month">Month</label>
@@ -958,7 +965,7 @@
       <div style="overflow-x:auto">
         <table class="data-table" id="op-table"><thead><tr id="op-thead"></tr></thead><tbody id="op-tbody"></tbody></table>
       </div>
-      <div style="font-size:.75rem;color:#718096;margin-top:.5rem">Optimal = the added HLH MW and LLH MW (whole MW, 0–150) that give the lowest net cost for the month, on top of the contracts already in the plan. HLH = HE 8–23 Mon–Sat excluding holidays; LLH = all other hours. Assumptions: added HLH and LLH are bought at the higher of the Palo or Mid-C futures price for that month + $10/MWh (the adder is editable, or enter a fixed HLH/LLH price to override). Each month's futures price is used for that month in every year (futures from data/market_prices.csv: Dec 2026–Nov 2027); shortage is costed at the month's shortage price; Lehi gens cover up to 21 MW of shortage at the internal gen rate; PX sell-back and spinning reserve are each half the month's shortage price unless you enter a price. Net cost = energy cost (including the purchase) − sell-back revenue − spinning reserve revenue. Savings = net cost with no added purchase − optimal net cost.</div>
+      <div style="font-size:.75rem;color:#718096;margin-top:.5rem">Optimal = the added HLH MW and LLH MW (whole MW) that give the lowest net cost for the month, on top of the contracts already in the plan. Purchases are capped at the most the month needs: the largest hourly shortfall before Lehi gens (load − supply) in those hours, so power is never bought just to sell it back. HLH = HE 8–23 Mon–Sat excluding holidays; LLH = all other hours. Assumptions: added HLH and LLH are bought at the higher of the Palo or Mid-C futures price for that month + $10/MWh (the adder is editable, or enter a fixed HLH/LLH price to override). Each month's futures price is used for that month in every year (futures from data/market_prices.csv: Dec 2026–Nov 2027); shortage is costed at the month's shortage price; Lehi gens cover up to 21 MW of shortage at the internal gen rate; PX sell-back and spinning reserve are each half the month's shortage price unless you enter a price. Net cost = energy cost (including the purchase) − sell-back revenue − spinning reserve revenue. Savings = net cost with no added purchase − optimal net cost.</div>
     </div>
   </div>
 
@@ -1007,10 +1014,15 @@
   // ── Tabs ──────────────────────────────────────────────────────────────
 
   function switchTab(name) {
+    // "wi-typical" / "wi-worst" show the What-If page with pool prices loaded as the assumptions
+    const scen = name === "wi-typical" ? "typical" : name === "wi-worst" ? "worst" : (name === "whatif" ? "default" : null);
+    const page = scen ? "whatif" : name;
     ["gen-sch", "availability", "forecast", "solar-red-mesa", "solar-steele-a", "wind-horse-butte", "supply", "longterm", "dayplan", "whatif", "monthtable", "history"].forEach(t => {
-      document.getElementById(`tab-${t}`).classList.toggle("hidden", name !== t);
+      document.getElementById(`tab-${t}`).classList.toggle("hidden", page !== t);
       document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t);
     });
+    ["wi-typical", "wi-worst"].forEach(t => document.getElementById(`tab-btn-${t}`).classList.toggle("active", name === t));
+    if (scen) setWiScenario(scen);
     if (name === "gen-sch") loadGenSchDisplay();
     if (name === "availability") loadAvailability();
   }
@@ -2121,6 +2133,51 @@
            `= net total cost ${usd(d.month_total_cost)}. Assumption: PX sell-back price and generator spinning reserve capacity payment are each half of the month's shortage price, unless you enter a price. Sell-back is paid on supply above load, up to the contract volume that hour. Spinning reserve is paid on the part of the 21 MW Lehi gens not running that hour.`;
   }
 
+  // ── What-If price scenario: default assumptions, typical pool, or worst-year pool ──
+  let _wiScenario = "default";
+  let _wiPool = null;
+  async function setWiScenario(scen) {
+    const changed = scen !== _wiScenario;
+    _wiScenario = scen;
+    if (changed) {
+      document.getElementById("wi-results").classList.add("hidden");
+      document.getElementById("op-tbody").replaceChildren();
+      document.getElementById("op-thead").replaceChildren();
+    }
+    const banner = document.getElementById("wi-scenario-banner");
+    if (scen === "default") { banner.style.display = "none"; return; }
+    if (!_wiPool) {
+      try { _wiPool = (await (await fetch("/api/pool_scenarios")).json()).months; }
+      catch (e) { _wiPool = null; }
+    }
+    if (!_wiPool) { banner.style.display = "none"; return; }
+    const mn = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const p1 = _wiPool[1] || {};
+    document.getElementById("wi-scenario-title").textContent = scen === "typical"
+      ? `Typical pool prices loaded: monthly average of Sch Log pool prices, ${p1.typical_years || "2019–2025"}`
+      : `Worst-year pool prices loaded: ${p1.worst_year || 2022}, the highest-priced year of 2019–2025`;
+    const tb = document.getElementById("wi-scenario-tbody");
+    tb.replaceChildren();
+    const row = (label, vals, bold) => {
+      const tr = document.createElement("tr");
+      [label, ...vals].forEach((v, i) => {
+        const td = document.createElement(bold ? "th" : "td");
+        td.textContent = v;
+        if (i > 0) { td.style.textAlign = "right"; td.style.fontFamily = bold ? "" : "monospace"; }
+        tr.appendChild(td);
+      });
+      tb.appendChild(tr);
+    };
+    row("$/MWh", mn, true);
+    row("Pool HL (shortage, HLH hours)", mn.map((_, i) => _wiPool[i + 1] ? _wiPool[i + 1][`${scen}_hl`].toFixed(2) : ""));
+    row("Pool LL (shortage, LLH hours)", mn.map((_, i) => _wiPool[i + 1] ? _wiPool[i + 1][`${scen}_ll`].toFixed(2) : ""));
+    document.getElementById("wi-scenario-note").textContent =
+      "On this page the shortage price is the pool price: HL for HLH hours (HE 8–23 Mon–Sat), LL for all other hours. " +
+      "PX sell-back and spinning reserve default to half of that hour's pool price. Any price you type in the boxes below overrides these. " +
+      "The Optimal Purchase Plan at the bottom uses these pool prices too.";
+    banner.style.display = "block";
+  }
+
   // ── Optimal purchase plan (minimum net cost) ─────────────────────────
   async function runOptimal() {
     const status = document.getElementById("op-status");
@@ -2137,6 +2194,7 @@
     const cr = document.getElementById("op-cap-rate").value.trim();
     if (sr !== "") q.set("sell_rate", sr);
     if (cr !== "") q.set("cap_rate", cr);
+    if (_wiScenario !== "default") q.set("pool", _wiScenario);
     status.textContent = "Searching every month… this can take a minute or two";
     try {
       const res = await fetch(`/api/optimal?${q}`);
@@ -2502,6 +2560,7 @@
   // supply (from /api/longterm "days"), plus the added PX only on the days it delivers.
   function wiDailyIgShort(days, addInfo) {
     let igKWh = 0, shKWh = 0, pxLongKWh = 0, genLongKWh = 0;
+    const B = { h: { sh: 0, px: 0, gen: 0 }, l: { sh: 0, px: 0, gen: 0 } };   // by HLH / LLH hours
     (days || []).forEach(d => {
       const dow    = new Date(d.date + "T12:00:00").getDay();
       const allLow = dow === 0 || addInfo.holidays.has(d.date);
@@ -2514,11 +2573,16 @@
         igKWh += ig; shKWh += raw - ig;
         // Long: supply above load is sold back, but only up to the contract (PX) volume that hour
         const excess = Math.max(0, d.supply[om] + add - d.load[om]);
-        pxLongKWh  += Math.min(excess, ((d.contract && d.contract[om]) || 0) + add);
+        const pxl    = Math.min(excess, ((d.contract && d.contract[om]) || 0) + add);
+        pxLongKWh  += pxl;
         genLongKWh += 21000 - ig;   // Lehi gen capacity not needed this hour
+        const b = (!allLow && om >= 7 && om <= 22) ? B.h : B.l;
+        b.sh += raw - ig; b.px += pxl; b.gen += 21000 - ig;
       }
     });
-    return { igMWh: igKWh / 1000, shMWh: shKWh / 1000, pxLongMWh: pxLongKWh / 1000, genLongMWh: genLongKWh / 1000 };
+    const mw = o => ({ sh: o.sh / 1000, px: o.px / 1000, gen: o.gen / 1000 });
+    return { igMWh: igKWh / 1000, shMWh: shKWh / 1000, pxLongMWh: pxLongKWh / 1000, genLongMWh: genLongKWh / 1000,
+             hlh: mw(B.h), llh: mw(B.l) };
   }
 
   function wiComputeWhatifHourly(baseHourly, addInfo) {
@@ -2710,10 +2774,17 @@
 
       // ── Shortage price: user's scenario value, else the month's default ──
       const shortDefault = data.shortage_rate;
-      const shortRate = (shortUser != null && !isNaN(shortUser)) ? shortUser : (shortDefault || 0);
       const shortOverride = shortUser != null && !isNaN(shortUser);
+      const pool = (_wiScenario !== "default" && _wiPool && _wiPool[month]) ? _wiPool[month] : null;
+      // Shortage price for HLH and LLH hours: your price > pool scenario (HL / LL) > month default
+      const shH = shortOverride ? shortUser : pool ? pool[`${_wiScenario}_hl`] : (shortDefault || 0);
+      const shL = shortOverride ? shortUser : pool ? pool[`${_wiScenario}_ll`] : (shortDefault || 0);
+      const curLen = wiDailyIgShort(data.days, { ...addInfo, highKW: 0, lowKW: 0, spKW: 0 });
+      const wiLen  = wiDailyIgShort(data.days, addInfo);
+      const shCostOf = L => L.hlh.sh * shH + L.llh.sh * shL;
+      const shortRate = curLen.shMWh > 0 ? shCostOf(curLen) / curLen.shMWh : (shH + shL) / 2;  // effective
       data.cost_rates = { ...data.cost_rates, shortage: shortRate };
-      const curShCost = Math.round((data.month_shortage_kwh || 0) / 1000 * shortRate);
+      const curShCost = Math.round(shCostOf(curLen));
       data.cost_pie = { ...data.cost_pie };
       if (curShCost > 0) data.cost_pie.shortage = curShCost; else delete data.cost_pie.shortage;
 
@@ -2726,19 +2797,22 @@
       // ── What-If calculation ───────────────────────────────────────
       const wiHourly  = wiComputeWhatifHourly(data.hourly, addInfo);
       const wiCostPie = wiComputeCostPie(data.cost_pie, data.cost_rates, data.days, addInfo, highRate, lowRate, spRate);
+      { const c = Math.round(shCostOf(wiLen)); if (c > 0) wiCostPie.shortage = c; else delete wiCostPie.shortage; }
       const wiRateMap = { ...data.cost_rates, add_px_high: highRate, add_px_low: lowRate, add_px_sp: spRate };
 
       // Blended costs
       // Length: PX sell-back and Lehi gen spinning reserve revenue (current vs what-if)
       // Assumption: each is half the shortage price unless the user enters a price
-      const sellRate = isNaN(sellIn) ? shortRate / 2 : sellIn;
-      const capRate  = isNaN(capIn)  ? shortRate / 2 : capIn;
+      const sH = isNaN(sellIn) ? shH / 2 : sellIn, sL = isNaN(sellIn) ? shL / 2 : sellIn;
+      const cH = isNaN(capIn)  ? shH / 2 : capIn,  cL = isNaN(capIn)  ? shL / 2 : capIn;
       const sellSrc  = isNaN(sellIn) ? "½ of shortage price" : "your price";
       const capSrc   = isNaN(capIn)  ? "½ of shortage price" : "your price";
-      const curLen = wiDailyIgShort(data.days, { ...addInfo, highKW: 0, lowKW: 0, spKW: 0 });
-      const wiLen  = wiDailyIgShort(data.days, addInfo);
-      const curSellRev = curLen.pxLongMWh * sellRate, wiSellRev = wiLen.pxLongMWh * sellRate;
-      const curCapRev  = curLen.genLongMWh * capRate, wiCapRev  = wiLen.genLongMWh * capRate;
+      const hl = (h, l) => h === l ? `$${h.toFixed(2)}` : `HLH $${h.toFixed(2)} / LLH $${l.toFixed(2)}`;
+      const sellRateTxt = hl(sH, sL), capRateTxt = hl(cH, cL);
+      const sellOf = L => L.hlh.px * sH + L.llh.px * sL;
+      const capOf  = L => L.hlh.gen * cH + L.llh.gen * cL;
+      const curSellRev = sellOf(curLen), wiSellRev = sellOf(wiLen);
+      const curCapRev  = capOf(curLen),  wiCapRev  = capOf(wiLen);
       const curEnergy  = Object.values(data.cost_pie).reduce((a, b) => a + b, 0);
       const wiEnergy   = Object.values(wiCostPie).reduce((a, b) => a + b, 0);
       const curNet     = curEnergy - curSellRev - curCapRev;
@@ -2787,9 +2861,9 @@
         document.getElementById(id + "-note").textContent = note;
       };
       setCard("wi-sell-rev", curSellRev, wiSellRev,
-        `Current → What-If. PX long ${Math.round(curLen.pxLongMWh).toLocaleString()} → ${Math.round(wiLen.pxLongMWh).toLocaleString()} MWh @ $${sellRate.toFixed(2)}/MWh (${sellSrc})`);
+        `Current → What-If. PX long ${Math.round(curLen.pxLongMWh).toLocaleString()} → ${Math.round(wiLen.pxLongMWh).toLocaleString()} MWh @ ${sellRateTxt}/MWh (${sellSrc})`);
       setCard("wi-cap-rev", curCapRev, wiCapRev,
-        `Current → What-If. Gens long ${Math.round(curLen.genLongMWh).toLocaleString()} → ${Math.round(wiLen.genLongMWh).toLocaleString()} MWh @ $${capRate.toFixed(2)}/MWh (${capSrc})`);
+        `Current → What-If. Gens long ${Math.round(curLen.genLongMWh).toLocaleString()} → ${Math.round(wiLen.genLongMWh).toLocaleString()} MWh @ ${capRateTxt}/MWh (${capSrc})`);
       document.getElementById("wi-current-total-note").textContent =
         `Energy ${usd(curEnergy)} − sell-back ${usd(curSellRev)} − spinning reserve ${usd(curCapRev)}`;
       document.getElementById("wi-whatif-total-note").textContent =
@@ -2807,9 +2881,15 @@
       const srEl = document.getElementById("wi-shortage-rate");
       const srNote = document.getElementById("wi-shortage-rate-note");
       const dflt = shortDefault != null ? `$${shortDefault.toFixed(2)}` : "not set";
-      if (shortOverride || shortDefault != null) {
+      if (!shortOverride && pool) {
+        srEl.style.color = "#c05621";
+        srEl.textContent = `HLH $${shH.toFixed(2)} / LLH $${shL.toFixed(2)}`;
+        srNote.textContent = _wiScenario === "typical"
+          ? `Typical pool price for ${monthNames[month]} (Sch Log average, ${pool.typical_years}). Applied to current and what-if.`
+          : `Worst-year pool price for ${monthNames[month]} (${pool.worst_year}, the highest-priced year of 2019–2025). Applied to current and what-if.`;
+      } else if (shortOverride || shortDefault != null) {
         srEl.style.color = shortOverride ? "#2b6cb0" : "";
-        srEl.textContent = `$${shortRate.toFixed(2)}`;
+        srEl.textContent = `$${shH.toFixed(2)}`;
         const sp = document.createElement("span"); sp.className = "card-unit"; sp.textContent = " $/MWh";
         srEl.appendChild(sp);
         srNote.textContent = shortOverride
