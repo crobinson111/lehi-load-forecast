@@ -627,6 +627,10 @@
           <option value="2032">2032</option><option value="2033">2033</option>
         </select>
       </div>
+      <div class="field"><label for="mt-sell-rate">PX Sell-Back $/MWh</label>
+        <input type="number" id="mt-sell-rate" placeholder="½ shortage" min="0" max="2000" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
+      <div class="field"><label for="mt-cap-rate">Spinning Reserve $/MWh</label>
+        <input type="number" id="mt-cap-rate" placeholder="½ shortage" min="0" max="2000" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
       <button class="btn-primary" onclick="runMonthTable()">Load</button>
       <span id="mt-status" style="font-size:.82rem;color:#718096;display:none"></span>
     </div>
@@ -649,7 +653,7 @@
             <tbody id="mt-year-tbody"></tbody>
           </table>
         </div>
-        <div style="font-size:.75rem;color:#718096;margin-top:.5rem">Load and shortage in kWh. Actual load, total cost (Energy Expense) and blended rate (Blended Cost with Generation) come from the UAMPS Power Bills workbooks. * = no bill yet, load from meters (complete months only). Actual shortage is blank until a bill figure is chosen.</div>
+        <div style="font-size:.75rem;color:#718096;margin-top:.5rem">Load and shortage in kWh. Actual load, total cost (Energy Expense) and blended rate (Blended Cost with Generation) come from the UAMPS Power Bills workbooks. * = no bill yet, load from meters (complete months only). Actual shortage is blank until a bill figure is chosen. Predicted Total Cost (Net) = energy cost − PX sell-back − spinning reserve revenue. Assumption: PX sell-back price and generator spinning reserve capacity payment are each half of the month's shortage price, unless you enter a price. Sell-back is paid on supply above load, up to the contract volume that hour. Spinning reserve is paid on the part of the 21 MW Lehi gens not running that hour.</div>
       </div>
       <div class="chart-wrap" style="margin-bottom:1.25rem">
         <div class="chart-title" id="mt-peak-title">Predicted Peak &amp; Shortage by Month</div>
@@ -698,6 +702,10 @@
           <option value="2032">2032</option><option value="2033">2033</option>
         </select>
       </div>
+      <div class="field"><label for="lt-sell-rate">PX Sell-Back $/MWh</label>
+        <input type="number" id="lt-sell-rate" placeholder="½ shortage" min="0" max="2000" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
+      <div class="field"><label for="lt-cap-rate">Spinning Reserve $/MWh</label>
+        <input type="number" id="lt-cap-rate" placeholder="½ shortage" min="0" max="2000" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
       <button class="btn-primary" onclick="runLongterm()">Run Forecast</button>
       <span id="lt-status" style="font-size:.82rem;color:#718096;display:none"></span>
       <span id="lt-blended-cost" style="display:none; font-size:.82rem; font-weight:600; color:#2b6cb0; background:#ebf8ff; border:1px solid #90cdf4; border-radius:4px; padding:.25rem .65rem;"></span>
@@ -712,6 +720,7 @@
         <div class="card"><div class="card-label">Peak Load</div><div class="card-value" id="lt-peak-load">—<span class="card-unit"> kW</span></div></div>
         <div class="card hour"><div class="card-label">Peak Hour</div><div class="card-value" id="lt-peak-hour">—</div></div>
       </div>
+      <div id="lt-revenue-note" style="font-size:.8rem;color:#234e52;background:#e6fffa;border:1px solid #81e6d9;border-radius:4px;padding:.35rem .7rem;margin-top:.5rem"></div>
       <div id="lt-bias-note" style="display:none; font-size:.8rem; color:#2d4a1e; background:#f0fff4; border:1px solid #68d391; border-radius:4px; padding:.25rem .7rem; margin-top:.5rem; width:fit-content;"></div>
 
       <!-- 24-hour stacked chart -->
@@ -833,9 +842,19 @@
         <div class="field" style="margin:0"><label for="wi-short-rate" style="font-size:.75rem">$/MWh (blank = default)</label>
           <input type="number" id="wi-short-rate" placeholder="default" min="0" max="2000" style="width:90px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
       </div>
+      <div style="display:flex;flex-direction:column;gap:.3rem;padding:.5rem .75rem;background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px">
+        <div style="font-size:.7rem;font-weight:700;color:#2c7a7b;text-transform:uppercase;letter-spacing:.06em">Revenue When Long</div>
+        <div style="display:flex;gap:.5rem">
+          <div class="field" style="margin:0"><label for="wi-sell-rate" style="font-size:.75rem">PX Sell-Back $/MWh</label>
+            <input type="number" id="wi-sell-rate" placeholder="½ shortage" min="0" max="2000" style="width:90px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
+          <div class="field" style="margin:0"><label for="wi-cap-rate" style="font-size:.75rem">Spinning Reserve $/MWh</label>
+            <input type="number" id="wi-cap-rate" placeholder="½ shortage" min="0" max="2000" style="width:90px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
+        </div>
+      </div>
       <button class="btn-primary" onclick="runWhatIf()">Run Analysis</button>
       <span id="wi-status" style="font-size:.82rem;color:#718096;display:none"></span>
     </div>
+    <div style="font-size:.75rem;color:#718096;margin:-.25rem 0 1rem">Assumption: PX sell-back price and generator spinning reserve capacity payment are each half of the month's shortage price, unless you enter a price. Sell-back is paid on supply above load, up to the contract volume that hour. Spinning reserve is paid on the part of the 21 MW Lehi gens not running that hour.</div>
 
     <div id="wi-results" class="hidden">
       <!-- Blended cost comparison banner -->
@@ -843,10 +862,12 @@
         <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">Current Total Cost</div>
           <div class="card-value" id="wi-current-total">—</div>
+          <div id="wi-current-total-note" style="font-size:.72rem;color:#718096;margin-top:.2rem"></div>
         </div>
         <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">What-If Total Cost</div>
           <div class="card-value" id="wi-whatif-total">—</div>
+          <div id="wi-whatif-total-note" style="font-size:.72rem;color:#718096;margin-top:.2rem"></div>
         </div>
         <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">Current Blended Cost</div>
@@ -875,6 +896,16 @@
         <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">Monthly Cost Savings</div>
           <div class="card-value" id="wi-cost-savings">—</div>
+        </div>
+        <div class="card" style="flex:1;min-width:170px">
+          <div class="card-label">PX Sell-Back Revenue</div>
+          <div class="card-value" id="wi-sell-rev">—</div>
+          <div id="wi-sell-rev-note" style="font-size:.72rem;color:#718096;margin-top:.2rem"></div>
+        </div>
+        <div class="card" style="flex:1;min-width:170px">
+          <div class="card-label">Spinning Reserve Revenue</div>
+          <div class="card-value" id="wi-cap-rev">—</div>
+          <div id="wi-cap-rev-note" style="font-size:.72rem;color:#718096;margin-top:.2rem"></div>
         </div>
         <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">Shortage Price (Assumed)</div>
@@ -2051,6 +2082,25 @@
     shortage:  "rgba(255,105,180,0.85)",
   };
 
+  // Optional sell-back / spinning reserve price inputs (blank = half the shortage price)
+  function revenueQuery(prefix) {
+    let q = "";
+    const s = document.getElementById(prefix + "-sell-rate").value.trim();
+    const c = document.getElementById(prefix + "-cap-rate").value.trim();
+    if (s !== "" && !isNaN(parseFloat(s))) q += `&sell_rate=${parseFloat(s)}`;
+    if (c !== "" && !isNaN(parseFloat(c))) q += `&cap_rate=${parseFloat(c)}`;
+    return q;
+  }
+  function revenueSummary(d) {
+    if (d.energy_cost == null) return "";
+    const usd = v => "$" + Math.round(v || 0).toLocaleString();
+    const r   = v => "$" + (v || 0).toFixed(2);
+    return `Energy cost ${usd(d.energy_cost)} − PX sell-back ${usd(d.sell_back_revenue)} ` +
+           `(${Math.round(d.px_long_mwh).toLocaleString()} MWh long @ ${r(d.sell_back_rate)}/MWh) − ` +
+           `spinning reserve ${usd(d.capacity_revenue)} (${Math.round(d.gen_long_mwh).toLocaleString()} MWh @ ${r(d.capacity_rate)}/MWh) ` +
+           `= net total cost ${usd(d.month_total_cost)}. Assumption: PX sell-back price and generator spinning reserve capacity payment are each half of the month's shortage price, unless you enter a price. Sell-back is paid on supply above load, up to the contract volume that hour. Spinning reserve is paid on the part of the 21 MW Lehi gens not running that hour.`;
+  }
+
   async function runLongterm() {
     const month  = document.getElementById("lt-month").value;
     const year   = document.getElementById("lt-year").value;
@@ -2058,7 +2108,7 @@
     status.textContent = "Running…";
     status.style.display = "inline";
     try {
-      const res  = await fetch(`/api/longterm?month=${month}&year=${year}`);
+      const res  = await fetch(`/api/longterm?month=${month}&year=${year}${revenueQuery("lt")}`);
       const data = await res.json();
       if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
       renderLongterm(data);
@@ -2085,6 +2135,8 @@
         blendedEl.style.display = "none";
       }
     }
+    const revNote = document.getElementById("lt-revenue-note");
+    if (revNote) revNote.textContent = revenueSummary(data);
     const biasNote = document.getElementById("lt-bias-note");
     if (biasNote) {
       const growth = data.yoy_growth;
@@ -2360,7 +2412,7 @@
   // Internal gen and remaining shortage counted day by day: each day's own load and
   // supply (from /api/longterm "days"), plus the added PX only on the days it delivers.
   function wiDailyIgShort(days, addInfo) {
-    let igKWh = 0, shKWh = 0;
+    let igKWh = 0, shKWh = 0, pxLongKWh = 0, genLongKWh = 0;
     (days || []).forEach(d => {
       const dow    = new Date(d.date + "T12:00:00").getDay();
       const allLow = dow === 0 || addInfo.holidays.has(d.date);
@@ -2371,9 +2423,13 @@
         const raw = Math.max(0, d.load[om] - (d.supply[om] + add));
         const ig  = Math.min(raw, 21000);
         igKWh += ig; shKWh += raw - ig;
+        // Long: supply above load is sold back, but only up to the contract (PX) volume that hour
+        const excess = Math.max(0, d.supply[om] + add - d.load[om]);
+        pxLongKWh  += Math.min(excess, ((d.contract && d.contract[om]) || 0) + add);
+        genLongKWh += 21000 - ig;   // Lehi gen capacity not needed this hour
       }
     });
-    return { igMWh: igKWh / 1000, shMWh: shKWh / 1000 };
+    return { igMWh: igKWh / 1000, shMWh: shKWh / 1000, pxLongMWh: pxLongKWh / 1000, genLongMWh: genLongKWh / 1000 };
   }
 
   function wiComputeWhatifHourly(baseHourly, addInfo) {
@@ -2542,6 +2598,8 @@
     const lowRate  = parseFloat(document.getElementById("wi-low-rate").value) || 63;
     const spMW     = parseFloat(document.getElementById("wi-sp-mw").value) || 0;
     const spRate   = parseFloat(document.getElementById("wi-sp-rate").value) || 63;
+    const sellIn   = parseFloat(document.getElementById("wi-sell-rate").value);
+    const capIn    = parseFloat(document.getElementById("wi-cap-rate").value);
     const shortIn  = document.getElementById("wi-short-rate").value.trim();
     const shortUser = shortIn === "" ? null : parseFloat(shortIn);
     const highKW   = highMW * 1000;
@@ -2582,8 +2640,26 @@
       const wiRateMap = { ...data.cost_rates, add_px_high: highRate, add_px_low: lowRate, add_px_sp: spRate };
 
       // Blended costs
-      const currentBlended = shortOverride ? wiBlended(data.cost_pie, data.cost_rates) : (data.blended_cost_per_mwh || 0);
-      const wiBlendedVal   = wiBlended(wiCostPie, wiRateMap);
+      // Length: PX sell-back and Lehi gen spinning reserve revenue (current vs what-if)
+      // Assumption: each is half the shortage price unless the user enters a price
+      const sellRate = isNaN(sellIn) ? shortRate / 2 : sellIn;
+      const capRate  = isNaN(capIn)  ? shortRate / 2 : capIn;
+      const sellSrc  = isNaN(sellIn) ? "½ of shortage price" : "your price";
+      const capSrc   = isNaN(capIn)  ? "½ of shortage price" : "your price";
+      const curLen = wiDailyIgShort(data.days, { ...addInfo, highKW: 0, lowKW: 0, spKW: 0 });
+      const wiLen  = wiDailyIgShort(data.days, addInfo);
+      const curSellRev = curLen.pxLongMWh * sellRate, wiSellRev = wiLen.pxLongMWh * sellRate;
+      const curCapRev  = curLen.genLongMWh * capRate, wiCapRev  = wiLen.genLongMWh * capRate;
+      const curEnergy  = Object.values(data.cost_pie).reduce((a, b) => a + b, 0);
+      const wiEnergy   = Object.values(wiCostPie).reduce((a, b) => a + b, 0);
+      const curNet     = curEnergy - curSellRev - curCapRev;
+      const wiNet      = wiEnergy - wiSellRev - wiCapRev;
+
+      // Blended cost = net cost (after sell-back & capacity revenue) per MWh of Lehi load,
+      // so energy that is sold back doesn't dilute the rate
+      const loadMWh        = (data.month_load_kwh || 0) / 1000;
+      const currentBlended = loadMWh > 0 ? curNet / loadMWh : 0;
+      const wiBlendedVal   = loadMWh > 0 ? wiNet  / loadMWh : 0;
 
       // ── What-If charts ────────────────────────────────────────────
       const parts = [];
@@ -2614,8 +2690,21 @@
       document.getElementById("wi-add-sp-mwh").innerHTML =
         `${Math.round(addInfo.spMWh).toLocaleString()}<span class="card-unit"> MWh</span>`;
 
-      const currentTotalCost = Object.values(data.cost_pie).reduce((a, b) => a + b, 0);
-      const whatifTotalCost  = Object.values(wiCostPie).reduce((a, b) => a + b, 0);
+      const currentTotalCost = curNet;
+      const whatifTotalCost  = wiNet;
+      const usd = v => `$${Math.round(v).toLocaleString()}`;
+      const setCard = (id, cur, wi, note) => {
+        document.getElementById(id).textContent = `${usd(cur)} → ${usd(wi)}`;
+        document.getElementById(id + "-note").textContent = note;
+      };
+      setCard("wi-sell-rev", curSellRev, wiSellRev,
+        `Current → What-If. PX long ${Math.round(curLen.pxLongMWh).toLocaleString()} → ${Math.round(wiLen.pxLongMWh).toLocaleString()} MWh @ $${sellRate.toFixed(2)}/MWh (${sellSrc})`);
+      setCard("wi-cap-rev", curCapRev, wiCapRev,
+        `Current → What-If. Gens long ${Math.round(curLen.genLongMWh).toLocaleString()} → ${Math.round(wiLen.genLongMWh).toLocaleString()} MWh @ $${capRate.toFixed(2)}/MWh (${capSrc})`);
+      document.getElementById("wi-current-total-note").textContent =
+        `Energy ${usd(curEnergy)} − sell-back ${usd(curSellRev)} − spinning reserve ${usd(curCapRev)}`;
+      document.getElementById("wi-whatif-total-note").textContent =
+        `Energy ${usd(wiEnergy)} − sell-back ${usd(wiSellRev)} − spinning reserve ${usd(wiCapRev)}`;
       document.getElementById("wi-current-total").innerHTML =
         `$${Math.round(currentTotalCost).toLocaleString()}`;
       document.getElementById("wi-whatif-total").innerHTML =
@@ -2939,13 +3028,14 @@
     const status = document.getElementById("mt-year-status");
     document.getElementById("mt-year-title").textContent = `Predicted vs Actual by Month — ${year}`;
     try {
-      let data = _mtYearCache[year];
+      const rq = revenueQuery("mt");
+      let data = _mtYearCache[year + rq];
       if (!data) {
         status.textContent = "Loading all 12 months…";
-        const res = await fetch(`/api/yearly?year=${year}`);
+        const res = await fetch(`/api/yearly?year=${year}${rq}`);
         data = await res.json();
         if (!res.ok) { status.textContent = data.detail ?? "Error loading yearly table"; return; }
-        _mtYearCache[year] = data;
+        _mtYearCache[year + rq] = data;
       }
       status.textContent = "";
       renderYearTable(data);
@@ -2964,7 +3054,8 @@
     const rate = v => v == null ? "" : "$" + v.toFixed(2);
     const div  = (a, b) => (a != null && b) ? a / b : null;
     const cols = ["Month", "Predicted Load", "Load", "Predicted Shortage", "Shortage",
-                  "Predicted Shortage %", "Shortage %", "Predicted Total Cost", "Total Cost",
+                  "Predicted Shortage %", "Shortage %", "Predicted Energy Cost", "Predicted PX Sell-Back Revenue",
+                  "Predicted Spinning Reserve Revenue", "Predicted Total Cost (Net)", "Total Cost",
                   "Predicted Blended Rate ($/MWh)", "Blended Rate ($/MWh)"];
     const thead = document.getElementById("mt-year-thead");
     while (thead.firstChild) thead.removeChild(thead.firstChild);
@@ -2983,7 +3074,7 @@
       });
       tbody.appendChild(tr);
     };
-    const T = { pl: 0, l: 0, ps: 0, s: 0, pc: 0, c: 0, plForCost: 0, lForCost: 0, lForShort: 0, plForShort: 0 };
+    const T = { pe: 0, psb: 0, pcr: 0, pl: 0, l: 0, ps: 0, s: 0, pc: 0, c: 0, plForCost: 0, lForCost: 0, lForShort: 0, plForShort: 0 };
     data.months.forEach(m => {
       const pRate = div(m.pred_total_cost, m.pred_load_kwh != null ? m.pred_load_kwh / 1000 : null);
       const aRate = m.blended_rate != null ? m.blended_rate : div(m.total_cost, m.load_kwh != null ? m.load_kwh / 1000 : null);
@@ -2991,7 +3082,11 @@
       const aPct  = div(m.shortage_kwh, m.load_kwh);
       addRow([m.name, num(m.pred_load_kwh), num(m.load_kwh) + (m.load_source === "meters" ? " *" : ""), num(m.pred_shortage_kwh), num(m.shortage_kwh),
               pPct == null ? "" : pct(pPct * 100), aPct == null ? "" : pct(aPct * 100),
+              usd(m.pred_energy_cost), usd(m.pred_sell_back_revenue), usd(m.pred_capacity_revenue),
               usd(m.pred_total_cost), usd(m.total_cost), rate(pRate), rate(aRate)]);
+      if (m.pred_energy_cost != null) T.pe += m.pred_energy_cost;
+      if (m.pred_sell_back_revenue != null) T.psb += m.pred_sell_back_revenue;
+      if (m.pred_capacity_revenue != null) T.pcr += m.pred_capacity_revenue;
       if (m.pred_load_kwh != null) T.pl += m.pred_load_kwh;
       if (m.load_kwh != null) T.l += m.load_kwh;
       if (m.pred_shortage_kwh != null) { T.ps += m.pred_shortage_kwh; if (m.pred_load_kwh) T.plForShort += m.pred_load_kwh; }
@@ -3004,6 +3099,8 @@
       any("pred_load_kwh") ? num(T.pl) : "", any("load_kwh") ? num(T.l) : "",
       any("pred_shortage_kwh") ? num(T.ps) : "", any("shortage_kwh") ? num(T.s) : "",
       T.plForShort ? pct(T.ps / T.plForShort * 100) : "", T.lForShort ? pct(T.s / T.lForShort * 100) : "",
+      any("pred_energy_cost") ? usd(T.pe) : "", any("pred_sell_back_revenue") ? usd(T.psb) : "",
+      any("pred_capacity_revenue") ? usd(T.pcr) : "",
       any("pred_total_cost") ? usd(T.pc) : "", any("total_cost") ? usd(T.c) : "",
       T.plForCost ? rate(T.pc / (T.plForCost / 1000)) : "", T.lForCost ? rate(T.c / (T.lForCost / 1000)) : "",
     ], true);
@@ -3017,7 +3114,7 @@
     status.style.display = "inline";
     document.getElementById("mt-results").classList.add("hidden");
     try {
-      const res  = await fetch(`/api/longterm?month=${month}&year=${year}`);
+      const res  = await fetch(`/api/longterm?month=${month}&year=${year}${revenueQuery("mt")}`);
       const data = await res.json();
       if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
       renderMonthTable(data);

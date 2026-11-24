@@ -2200,6 +2200,8 @@ async def history_week(
 async def longterm_forecast(
     month: int = Query(..., ge=1, le=12),
     year:  int = Query(..., ge=2020, le=2040),
+    sell_rate: float | None = Query(None, ge=0, description="PX sell-back $/MWh (default: half the shortage price)"),
+    cap_rate:  float | None = Query(None, ge=0, description="Gen spinning reserve $/MWh (default: half the shortage price)"),
 ):
     """Average hourly load + supply breakdown for a future month, using historical averages."""
     import calendar as _cal
@@ -2594,11 +2596,14 @@ async def longterm_forecast(
     ll_sum, ll_cnt = [0.0] * 24, [0] * 24
     sh_sum, sh_cnt = [0.0] * 24, [0] * 24
     days_detail: list = []   # per-day load and supply (before internal gen) for the What-If tab
+    px_long_kwh = 0.0    # supply above load, up to the contract volume that hour (sold back)
+    gen_long_kwh = 0.0   # Lehi gen capacity (21 MW) not needed that hour (spinning reserve)
     for day, d in zip(month_days, day_hour_loads):
         sched_on = day.weekday() != 6
         lowday = day.weekday() == 6 or day.isoformat() in _hol_lt
         day_total = 0.0
         day_supply = [0.0] * 24
+        day_contract = [0.0] * 24   # PX + OS + purchased contracts (sellable when long)
         for om in range(24):
             px_kw = round(avg_px.get(om, 0)) if sched_on else 0.0
             os_kw = round(avg_os.get(om, 0)) if sched_on else 0.0
@@ -2610,8 +2615,11 @@ async def longterm_forecast(
                 month_kwh[p["key"]] += v
                 pur += v
             day_supply[om] = base_by_hr[om] + px_kw + os_kw + pur
+            day_contract[om] = px_kw + os_kw + pur
             raw = max(0.0, d.get(om, 0.0) - day_supply[om])
             ig = min(raw, 21000.0)
+            px_long_kwh += min(max(0.0, day_supply[om] - d.get(om, 0.0)), day_contract[om])
+            gen_long_kwh += 21000.0 - ig
             month_kwh["internal_gen"] += ig
             month_kwh["shortage"] += raw - ig
             short_sum_by_hr[om] += raw - ig
@@ -2627,6 +2635,7 @@ async def longterm_forecast(
             "date": day.isoformat(),
             "load": [round(d.get(om, 0.0)) for om in range(24)],
             "supply": [round(v) for v in day_supply],
+            "contract": [round(v) for v in day_contract],
         })
     n_days = len(days_detail) or 1
     avg_short_by_hr = [v / n_days for v in short_sum_by_hr]
@@ -2647,6 +2656,9 @@ async def longterm_forecast(
     cost_pie:   dict = {}
     cost_rates: dict = {}
     shortage_rate: float | None = None   # assumed $/MWh for shortage (None = no rate set)
+    energy_cost: float | None = None
+    sell_back_rate = capacity_rate = sell_back_revenue = capacity_revenue = None
+    _month_load_mwh = sum(sum(d.values()) for d in day_hour_loads) / 1000.0
     costs_path = os.path.join(_BASE_DIR, "data", "resource_costs.csv")
     if os.path.exists(costs_path):
         try:
@@ -2702,13 +2714,20 @@ async def longterm_forecast(
                 r = _pur_rates.get(res)
                 return r if r is not None else _res_cost(res)
 
-            # Step 2: cost per resource = MWh × $/MWh
-            # Step 3: blended = total cost / total MWh (weighted average)
+            # Step 2: energy cost per resource = MWh × $/MWh
             total_cost = sum(mwh * _get_rate(res) for res, mwh in resource_mwh.items())
-            month_total_cost = round(total_cost, 2)
-            total_mwh  = sum(resource_mwh.values())
-            if total_mwh > 0:
-                blended_cost_per_mwh = round(total_cost / total_mwh, 2)
+            energy_cost = round(total_cost, 2)
+            # Step 3: revenue when long. Assumption: PX sell-back and gen spinning reserve
+            # are each paid at half the month's shortage price unless the user gives a price.
+            _half = 0.5 * _res_cost("shortage")
+            sell_back_rate = float(sell_rate) if isinstance(sell_rate, (int, float)) else _half
+            capacity_rate  = float(cap_rate)  if isinstance(cap_rate,  (int, float)) else _half
+            sell_back_revenue = round(px_long_kwh / 1000.0 * sell_back_rate, 2)
+            capacity_revenue  = round(gen_long_kwh / 1000.0 * capacity_rate, 2)
+            # Step 4: net total cost and blended = net cost per MWh of load
+            month_total_cost = round(total_cost - sell_back_revenue - capacity_revenue, 2)
+            if _month_load_mwh > 0:
+                blended_cost_per_mwh = round(month_total_cost / _month_load_mwh, 2)
             cost_pie   = {res: round(mwh * _get_rate(res))
                           for res, mwh in resource_mwh.items()
                           if round(mwh * _get_rate(res)) > 0}
@@ -2782,6 +2801,13 @@ async def longterm_forecast(
         "days": days_detail,
         "month_shortage_kwh": round(sum(daily_shortages_kwh)),
         "month_total_cost": month_total_cost,
+        "energy_cost": energy_cost,
+        "sell_back_rate": sell_back_rate,
+        "capacity_rate": capacity_rate,
+        "sell_back_revenue": sell_back_revenue,
+        "capacity_revenue": capacity_revenue,
+        "px_long_mwh": round(px_long_kwh / 1000.0, 1),
+        "gen_long_mwh": round(gen_long_kwh / 1000.0, 1),
         "yoy_growth": yoy_growth,
         "yoy_days": yoy_days,
         "base_year": base_year,
@@ -2797,7 +2823,11 @@ async def longterm_forecast(
 
 
 @app.get("/api/yearly")
-async def yearly_summary(year: int = Query(..., ge=2020, le=2040)):
+async def yearly_summary(
+    year: int = Query(..., ge=2020, le=2040),
+    sell_rate: float | None = Query(None, ge=0),
+    cap_rate:  float | None = Query(None, ge=0),
+):
     """Predicted vs actual by month for one year.
     Predicted: the Long Term forecast for each month.
     Actuals: data/monthly_actuals.csv, from the Power Bills workbooks' LFY Data
@@ -2843,10 +2873,17 @@ async def yearly_summary(year: int = Query(..., ge=2020, le=2040)):
     for m in range(1, 13):
         row = {"month": m, "name": _cal.month_name[m]}
         try:
-            lt = await longterm_forecast(month=m, year=year)
+            lt = await longterm_forecast(month=m, year=year,
+                                         sell_rate=sell_rate if isinstance(sell_rate, (int, float)) else None,
+                                         cap_rate=cap_rate if isinstance(cap_rate, (int, float)) else None)
             row["pred_load_kwh"]     = lt["month_load_kwh"]
             row["pred_shortage_kwh"] = lt["month_shortage_kwh"]
             row["pred_total_cost"]   = lt["month_total_cost"]
+            row["pred_energy_cost"]  = lt["energy_cost"]
+            row["pred_sell_back_revenue"] = lt["sell_back_revenue"]
+            row["pred_capacity_revenue"]  = lt["capacity_revenue"]
+            row["sell_back_rate"] = lt["sell_back_rate"]
+            row["capacity_rate"]  = lt["capacity_rate"]
             row["pred_peak_kw"]      = lt["month_peak_kw"]
             _ash = lt["avg_shortage_by_hour"]
             _mn, _mx = min(range(24), key=lambda i: _ash[i]), max(range(24), key=lambda i: _ash[i])
