@@ -1,4 +1,5 @@
 import csv
+import calendar as _cal_mod
 import io
 import json
 import os
@@ -2820,6 +2821,134 @@ async def longterm_forecast(
         "purchases": [{"label": p["label"], "key": p["key"], "mw": p["mw"],
                         "rate": p["rate"], "schedule": p["schedule"]} for p in purchases],
     }
+
+
+@app.get("/api/optimal")
+async def optimal_purchases(
+    start: str = Query("2027-01", description="YYYY-MM"),
+    end:   str = Query("2029-12", description="YYYY-MM"),
+    hlh_price: float | None = Query(None, ge=0, description="$/MWh for added HLH (default: market price + adder)"),
+    llh_price: float | None = Query(None, ge=0, description="$/MWh for added LLH (default: market price + adder)"),
+    adder: float = Query(10.0, description="$/MWh added to the higher of Palo / Mid-C"),
+    sell_rate: float | None = Query(None, ge=0),
+    cap_rate:  float | None = Query(None, ge=0),
+    max_mw: int = Query(150, ge=0, le=300),
+):
+    """Minimum-cost additional HLH and LLH MW for each month.
+    For each month the Long Term forecast's day-by-day load / supply is re-run with
+    H MW added in every HLH hour and L MW in every LLH hour. Each hour then costs:
+    internal gen x gen rate + shortage x shortage price + added MW x purchase price
+    - PX length x sell-back price - unused gen capacity x spinning reserve price.
+    HLH and LLH hours don't interact, so H and L are searched separately (1 MW steps)."""
+    sy, sm = (int(x) for x in start.split("-"))
+    ey, em = (int(x) for x in end.split("-"))
+    _sr = sell_rate if isinstance(sell_rate, (int, float)) else None
+    _cr = cap_rate if isinstance(cap_rate, (int, float)) else None
+    _hp_in = float(hlh_price) if isinstance(hlh_price, (int, float)) else None
+    _lp_in = float(llh_price) if isinstance(llh_price, (int, float)) else None
+    _add = float(adder) if isinstance(adder, (int, float)) else 10.0
+    # Market futures (data/market_prices.csv): purchase price = higher of Palo / Mid-C + adder.
+    # Each calendar month's price is used for that month in every year.
+    _mkt: dict = {}
+    try:
+        _mp = pd.read_csv(os.path.join(_BASE_DIR, "data", "market_prices.csv"))
+        for _, r in _mp.iterrows():
+            _mkt[int(r["month"])] = {
+                "hlh": max(float(r["palo_hlh"]), float(r["midc_hlh"])),
+                "llh": max(float(r["palo_llh"]), float(r["midc_llh"])),
+                "hlh_hub": "Palo" if float(r["palo_hlh"]) >= float(r["midc_hlh"]) else "Mid-C",
+                "llh_hub": "Palo" if float(r["palo_llh"]) >= float(r["midc_llh"]) else "Mid-C",
+            }
+    except Exception as _e:
+        logger.warning(f"market_prices.csv not read: {_e}")
+    _mx = int(max_mw) if isinstance(max_mw, int) else 150
+    ig_rate = 0.0
+    try:
+        _c = pd.read_csv(os.path.join(_BASE_DIR, "data", "resource_costs.csv"))
+        _r = _c[(_c["resource"] == "internal_gen")]
+        if not _r.empty:
+            ig_rate = float(_r["cost_per_mwh"].iloc[0])
+    except Exception:
+        pass
+    GEN = 21000.0
+    months = []
+    y, m = sy, sm
+    while (y, m) <= (ey, em):
+        lt = await longterm_forecast(month=m, year=y, sell_rate=_sr, cap_rate=_cr)
+        _mk = _mkt.get(m)
+        _hp = _hp_in if _hp_in is not None else (_mk["hlh"] + _add if _mk else 63.0)
+        _lp = _lp_in if _lp_in is not None else (_mk["llh"] + _add if _mk else 63.0)
+        _hsrc = "your price" if _hp_in is not None else (f"{_mk['hlh_hub']} + ${_add:g}" if _mk else "default")
+        _lsrc = "your price" if _lp_in is not None else (f"{_mk['llh_hub']} + ${_add:g}" if _mk else "default")
+        sh_r = lt.get("shortage_rate") or 0.0
+        s_r  = lt.get("sell_back_rate") or 0.0
+        c_r  = lt.get("capacity_rate") or 0.0
+        hol  = _wecc_holidays(y)
+        hlh_hrs, llh_hrs = [], []          # (load, supply, contract) per hour
+        for d in lt.get("days", []):
+            dt = date.fromisoformat(d["date"])
+            low = dt.weekday() == 6 or d["date"] in hol
+            con = d.get("contract") or [0] * 24
+            for om in range(24):
+                rec = (d["load"][om], d["supply"][om], con[om])
+                (hlh_hrs if (not low and 7 <= om <= 22) else llh_hrs).append(rec)
+
+        def _block(hrs, add_kw, price):
+            """Energy cost, sell-back and spinning reserve revenue for one block of hours."""
+            ig_k = sh_k = pxl_k = genl_k = 0.0
+            for ld, su, co in hrs:
+                raw = max(0.0, ld - su - add_kw)
+                ig = min(raw, GEN)
+                ig_k += ig; sh_k += raw - ig
+                pxl_k += min(max(0.0, su + add_kw - ld), co + add_kw)
+                genl_k += GEN - ig
+            pur = add_kw * len(hrs) / 1000.0 * price
+            energy = ig_k / 1000.0 * ig_rate + sh_k / 1000.0 * sh_r + pur
+            sell = pxl_k / 1000.0 * s_r
+            cap = genl_k / 1000.0 * c_r
+            return {"energy": energy, "purchase": pur, "sell": sell, "cap": cap,
+                    "net": energy - sell - cap, "shortage_mwh": sh_k / 1000.0}
+
+        def _best(hrs, price):
+            base = _block(hrs, 0.0, price)
+            best_mw, best = 0, base
+            for mw in range(1, _mx + 1):
+                r = _block(hrs, mw * 1000.0, price)
+                if r["net"] < best["net"] - 0.5:
+                    best_mw, best = mw, r
+            return best_mw, best, base
+
+        h_mw, h_best, h_base = _best(hlh_hrs, _hp)
+        l_mw, l_best, l_base = _best(llh_hrs, _lp)
+        # Parts of the plan cost that don't depend on the purchase (Nebo, UAMPS, existing PX, ...)
+        fixed = (lt.get("energy_cost") or 0.0) - (h_base["energy"] + l_base["energy"])
+        base_net = lt.get("month_total_cost")
+        energy = fixed + h_best["energy"] + l_best["energy"]
+        sell = h_best["sell"] + l_best["sell"]
+        cap = h_best["cap"] + l_best["cap"]
+        net = energy - sell - cap
+        months.append({
+            "year": y, "month": m, "label": f"{_cal_mod.month_abbr[m]} {y}",
+            "hlh_mw": h_mw, "llh_mw": l_mw,
+            "hlh_hours": len(hlh_hrs), "llh_hours": len(llh_hrs),
+            "hlh_mwh": round(h_mw * len(hlh_hrs), 1), "llh_mwh": round(l_mw * len(llh_hrs), 1),
+            "purchase_cost": round(h_best["purchase"] + l_best["purchase"], 2),
+            "energy_cost": round(energy, 2),
+            "sell_back_revenue": round(sell, 2),
+            "capacity_revenue": round(cap, 2),
+            "net_cost": round(net, 2),
+            "base_net_cost": base_net,
+            "savings": round(base_net - net, 2) if base_net is not None else None,
+            "shortage_mwh": round(h_best["shortage_mwh"] + l_best["shortage_mwh"], 1),
+            "load_mwh": round((lt.get("month_load_kwh") or 0) / 1000.0, 1),
+            "shortage_rate": sh_r, "sell_back_rate": s_r, "capacity_rate": c_r,
+            "hlh_price": round(_hp, 2), "llh_price": round(_lp, 2),
+            "hlh_price_source": _hsrc, "llh_price_source": _lsrc,
+        })
+        m += 1
+        if m > 12:
+            m, y = 1, y + 1
+    return {"adder": _add, "internal_gen_rate": ig_rate, "months": months}
 
 
 @app.get("/api/yearly")

@@ -940,6 +940,26 @@
         </div>
       </div>
     </div>
+
+    <!-- Optimal (minimum-cost) HLH / LLH purchases by month -->
+    <div class="chart-wrap" style="margin-top:1.5rem">
+      <div class="chart-title">Optimal Purchase Plan — Minimum Net Cost</div>
+      <div class="controls" style="align-items:flex-end;flex-wrap:wrap;gap:.75rem;margin-bottom:.5rem">
+        <div class="field"><label for="op-start">From</label><input type="month" id="op-start" value="2027-01" style="padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
+        <div class="field"><label for="op-end">To</label><input type="month" id="op-end" value="2029-12" style="padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
+        <div class="field"><label for="op-adder">Market Adder $/MWh</label><input type="number" id="op-adder" value="10" style="width:80px;padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
+        <div class="field"><label for="op-hlh-price">HLH Price $/MWh</label><input type="number" id="op-hlh-price" placeholder="market" min="0" style="width:90px;padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
+        <div class="field"><label for="op-llh-price">LLH Price $/MWh</label><input type="number" id="op-llh-price" placeholder="market" min="0" style="width:90px;padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
+        <div class="field"><label for="op-sell-rate">PX Sell-Back $/MWh</label><input type="number" id="op-sell-rate" placeholder="½ shortage" min="0" style="width:100px;padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
+        <div class="field"><label for="op-cap-rate">Spinning Reserve $/MWh</label><input type="number" id="op-cap-rate" placeholder="½ shortage" min="0" style="width:100px;padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
+        <button class="btn-primary" onclick="runOptimal()">Find Optimal Plan</button>
+        <span id="op-status" style="font-size:.82rem;color:#718096"></span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="data-table" id="op-table"><thead><tr id="op-thead"></tr></thead><tbody id="op-tbody"></tbody></table>
+      </div>
+      <div style="font-size:.75rem;color:#718096;margin-top:.5rem">Optimal = the added HLH MW and LLH MW (whole MW, 0–150) that give the lowest net cost for the month, on top of the contracts already in the plan. HLH = HE 8–23 Mon–Sat excluding holidays; LLH = all other hours. Assumptions: added HLH and LLH are bought at the higher of the Palo or Mid-C futures price for that month + $10/MWh (the adder is editable, or enter a fixed HLH/LLH price to override). Each month's futures price is used for that month in every year (futures from data/market_prices.csv: Dec 2026–Nov 2027); shortage is costed at the month's shortage price; Lehi gens cover up to 21 MW of shortage at the internal gen rate; PX sell-back and spinning reserve are each half the month's shortage price unless you enter a price. Net cost = energy cost (including the purchase) − sell-back revenue − spinning reserve revenue. Savings = net cost with no added purchase − optimal net cost.</div>
+    </div>
   </div>
 
   <!-- ══════════════════════ TAB 11: WEEK HISTORY ══════════════════════ -->
@@ -2099,6 +2119,75 @@
            `(${Math.round(d.px_long_mwh).toLocaleString()} MWh long @ ${r(d.sell_back_rate)}/MWh) − ` +
            `spinning reserve ${usd(d.capacity_revenue)} (${Math.round(d.gen_long_mwh).toLocaleString()} MWh @ ${r(d.capacity_rate)}/MWh) ` +
            `= net total cost ${usd(d.month_total_cost)}. Assumption: PX sell-back price and generator spinning reserve capacity payment are each half of the month's shortage price, unless you enter a price. Sell-back is paid on supply above load, up to the contract volume that hour. Spinning reserve is paid on the part of the 21 MW Lehi gens not running that hour.`;
+  }
+
+  // ── Optimal purchase plan (minimum net cost) ─────────────────────────
+  async function runOptimal() {
+    const status = document.getElementById("op-status");
+    const q = new URLSearchParams({
+      start: document.getElementById("op-start").value || "2027-01",
+      end:   document.getElementById("op-end").value   || "2029-12",
+      adder: document.getElementById("op-adder").value || "10",
+    });
+    const hp = document.getElementById("op-hlh-price").value.trim();
+    const lp = document.getElementById("op-llh-price").value.trim();
+    if (hp !== "") q.set("hlh_price", hp);
+    if (lp !== "") q.set("llh_price", lp);
+    const sr = document.getElementById("op-sell-rate").value.trim();
+    const cr = document.getElementById("op-cap-rate").value.trim();
+    if (sr !== "") q.set("sell_rate", sr);
+    if (cr !== "") q.set("cap_rate", cr);
+    status.textContent = "Searching every month… this can take a minute or two";
+    try {
+      const res = await fetch(`/api/optimal?${q}`);
+      const data = await res.json();
+      if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
+      renderOptimal(data);
+      status.textContent = "";
+    } catch (e) {
+      status.textContent = "Error: " + e.message;
+    }
+  }
+
+  function renderOptimal(data) {
+    const usd = v => v == null ? "" : (v < 0 ? "-$" : "$") + Math.abs(Math.round(v)).toLocaleString();
+    const num = v => v == null ? "" : Math.round(v).toLocaleString();
+    const cols = ["Month", "Optimal HLH (MW)", "Optimal LLH (MW)", "HLH $/MWh", "LLH $/MWh", "HLH MWh", "LLH MWh", "Purchase Cost",
+                  "Energy Cost", "PX Sell-Back Revenue", "Spinning Reserve Revenue", "Net Cost",
+                  "Net Cost, No Purchase", "Savings", "Net $/MWh Load"];
+    const thead = document.getElementById("op-thead");
+    while (thead.firstChild) thead.removeChild(thead.firstChild);
+    cols.forEach(c => { const th = document.createElement("th"); th.textContent = c; thead.appendChild(th); });
+    const tbody = document.getElementById("op-tbody");
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    const addRow = (cells, bold) => {
+      const tr = document.createElement("tr");
+      if (bold) { tr.style.fontWeight = "700"; tr.style.borderTop = "2px solid #cbd5e0"; tr.style.background = "#f7fafc"; }
+      cells.forEach((v, i) => {
+        const td = document.createElement("td");
+        td.textContent = v;
+        if (i > 0) { td.style.textAlign = "right"; td.style.fontFamily = "monospace"; td.style.whiteSpace = "nowrap"; }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    };
+    const rowOf = (label, r, bold) => addRow([label,
+      r.hlh_mw == null ? "" : String(r.hlh_mw), r.llh_mw == null ? "" : String(r.llh_mw),
+      r.hlh_price == null ? "" : `$${r.hlh_price.toFixed(2)} (${r.hlh_price_source})`,
+      r.llh_price == null ? "" : `$${r.llh_price.toFixed(2)} (${r.llh_price_source})`,
+      num(r.hlh_mwh), num(r.llh_mwh), usd(r.purchase_cost), usd(r.energy_cost),
+      usd(r.sell_back_revenue), usd(r.capacity_revenue), usd(r.net_cost), usd(r.base_net_cost),
+      usd(r.savings), r.load_mwh ? "$" + (r.net_cost / r.load_mwh).toFixed(2) : ""], bold);
+    const keys = ["hlh_mwh", "llh_mwh", "purchase_cost", "energy_cost", "sell_back_revenue",
+                  "capacity_revenue", "net_cost", "base_net_cost", "savings", "load_mwh"];
+    const sum = rows => { const t = {}; keys.forEach(k => t[k] = rows.reduce((a, r) => a + (r[k] || 0), 0)); return t; };
+    const years = [...new Set(data.months.map(m => m.year))];
+    years.forEach(y => {
+      const rows = data.months.filter(m => m.year === y);
+      rows.forEach(r => rowOf(r.label, r, false));
+      rowOf(`${y} Total`, sum(rows), true);
+    });
+    if (years.length > 1) rowOf("All Years", sum(data.months), true);
   }
 
   async function runLongterm() {
