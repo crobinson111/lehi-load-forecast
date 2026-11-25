@@ -633,6 +633,10 @@
         <input type="number" id="mt-sell-rate" placeholder="½ shortage" min="0" max="2000" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
       <div class="field"><label for="mt-cap-rate">Spinning Reserve $/MWh</label>
         <input type="number" id="mt-cap-rate" placeholder="½ shortage" min="0" max="2000" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
+      <div class="field"><label for="mt-pxcap-share">PX Capacity % of Length</label>
+        <input type="number" id="mt-pxcap-share" value="50" min="0" max="100" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
+      <div class="field"><label for="mt-pxcap-rate">PX Capacity $/MWh</label>
+        <input type="number" id="mt-pxcap-rate" placeholder="½ PX price" min="0" max="2000" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
       <button class="btn-primary" onclick="runMonthTable()">Load</button>
       <span id="mt-status" style="font-size:.82rem;color:#718096;display:none"></span>
     </div>
@@ -708,6 +712,10 @@
         <input type="number" id="lt-sell-rate" placeholder="½ shortage" min="0" max="2000" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
       <div class="field"><label for="lt-cap-rate">Spinning Reserve $/MWh</label>
         <input type="number" id="lt-cap-rate" placeholder="½ shortage" min="0" max="2000" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
+      <div class="field"><label for="lt-pxcap-share">PX Capacity % of Length</label>
+        <input type="number" id="lt-pxcap-share" value="50" min="0" max="100" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
+      <div class="field"><label for="lt-pxcap-rate">PX Capacity $/MWh</label>
+        <input type="number" id="lt-pxcap-rate" placeholder="½ PX price" min="0" max="2000" style="width:100px;padding:.4rem .6rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem"></div>
       <button class="btn-primary" onclick="runLongterm()">Run Forecast</button>
       <span id="lt-status" style="font-size:.82rem;color:#718096;display:none"></span>
       <span id="lt-blended-cost" style="display:none; font-size:.82rem; font-weight:600; color:#2b6cb0; background:#ebf8ff; border:1px solid #90cdf4; border-radius:4px; padding:.25rem .65rem;"></span>
@@ -858,10 +866,19 @@
             <input type="number" id="wi-cap-rate" placeholder="½ shortage" min="0" max="2000" style="width:90px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
         </div>
       </div>
+      <div style="display:flex;flex-direction:column;gap:.3rem;padding:.5rem .75rem;background:#f7fafc;border:1px solid #e2e8f0;border-radius:6px">
+        <div style="font-size:.7rem;font-weight:700;color:#2c7a7b;text-transform:uppercase;letter-spacing:.06em">PX Capacity Payment</div>
+        <div style="display:flex;gap:.5rem">
+          <div class="field" style="margin:0"><label for="wi-pxcap-share" style="font-size:.75rem">% of PX Length</label>
+            <input type="number" id="wi-pxcap-share" value="50" min="0" max="100" style="width:70px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
+          <div class="field" style="margin:0"><label for="wi-pxcap-rate" style="font-size:.75rem">$/MWh</label>
+            <input type="number" id="wi-pxcap-rate" placeholder="½ PX price" min="0" max="2000" style="width:90px;padding:.3rem .5rem;border:1px solid #cbd5e0;border-radius:6px;font-size:.875rem;display:block"></div>
+        </div>
+      </div>
       <button class="btn-primary" onclick="runWhatIf()">Run Analysis</button>
       <span id="wi-status" style="font-size:.82rem;color:#718096;display:none"></span>
     </div>
-    <div style="font-size:.75rem;color:#718096;margin:-.25rem 0 1rem">Assumption: PX sell-back price and generator spinning reserve capacity payment are each half of the month's shortage price, unless you enter a price. Sell-back is paid on supply above load, up to the contract volume that hour. Spinning reserve is paid on the part of the 21 MW Lehi gens not running that hour.</div>
+    <div style="font-size:.75rem;color:#718096;margin:-.25rem 0 1rem">Assumption: PX sell-back price and generator spinning reserve capacity payment are each half of the month's shortage price, unless you enter a price. Sell-back is paid on supply above load, up to the contract volume that hour. Spinning reserve is paid on the part of the 21 MW Lehi gens not running that hour. PX capacity payment: 50% of the PX length (editable) also earns a capacity payment, on top of its sell-back, at half the market PX price (the higher of Palo or Mid-C futures + $10, HLH or LLH) unless you enter a price.</div>
 
     <div id="wi-results" class="hidden">
       <!-- Blended cost comparison banner -->
@@ -915,6 +932,11 @@
           <div id="wi-cap-rev-note" style="font-size:.72rem;color:#718096;margin-top:.2rem"></div>
         </div>
         <div class="card" style="flex:1;min-width:170px">
+          <div class="card-label">PX Capacity Revenue</div>
+          <div class="card-value" id="wi-pxcap-rev">—</div>
+          <div id="wi-pxcap-rev-note" style="font-size:.72rem;color:#718096;margin-top:.2rem"></div>
+        </div>
+        <div class="card" style="flex:1;min-width:170px">
           <div class="card-label">Shortage Price (Assumed)</div>
           <div class="card-value" id="wi-shortage-rate">—</div>
           <div id="wi-shortage-rate-note" style="font-size:.72rem;color:#718096;margin-top:.2rem"></div>
@@ -959,13 +981,16 @@
         <div class="field"><label for="op-llh-price">LLH Price $/MWh</label><input type="number" id="op-llh-price" placeholder="market" min="0" style="width:90px;padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
         <div class="field"><label for="op-sell-rate">PX Sell-Back $/MWh</label><input type="number" id="op-sell-rate" placeholder="½ shortage" min="0" style="width:100px;padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
         <div class="field"><label for="op-cap-rate">Spinning Reserve $/MWh</label><input type="number" id="op-cap-rate" placeholder="½ shortage" min="0" style="width:100px;padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
+        <div class="field"><label for="op-pxcap-share">PX Capacity % of Length</label><input type="number" id="op-pxcap-share" value="50" min="0" max="100" style="width:80px;padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
+        <div class="field"><label for="op-pxcap-rate">PX Capacity $/MWh</label><input type="number" id="op-pxcap-rate" placeholder="½ PX price" min="0" style="width:100px;padding:.35rem .5rem;border:1px solid #cbd5e0;border-radius:6px"></div>
         <button class="btn-primary" onclick="runOptimal()">Find Optimal Plan</button>
+        <button class="btn-secondary" onclick="runOptimal('best')" title="The plan that loses the least whether pool prices turn out typical or like the worst year">Find Best Plan (Typical vs Worst)</button>
         <span id="op-status" style="font-size:.82rem;color:#718096"></span>
       </div>
       <div style="overflow-x:auto">
         <table class="data-table" id="op-table"><thead><tr id="op-thead"></tr></thead><tbody id="op-tbody"></tbody></table>
       </div>
-      <div style="font-size:.75rem;color:#718096;margin-top:.5rem">Optimal = the added HLH MW and LLH MW (whole MW) that give the lowest net cost for the month, on top of the contracts already in the plan. Purchases are capped at the most the month needs: the largest hourly shortfall before Lehi gens (load − supply) in those hours, so power is never bought just to sell it back. HLH = HE 8–23 Mon–Sat excluding holidays; LLH = all other hours. Assumptions: added HLH and LLH are bought at the higher of the Palo or Mid-C futures price for that month + $10/MWh (the adder is editable, or enter a fixed HLH/LLH price to override). Each month's futures price is used for that month in every year (futures from data/market_prices.csv: Dec 2026–Nov 2027); shortage is costed at the month's shortage price; Lehi gens cover up to 21 MW of shortage at the internal gen rate; PX sell-back and spinning reserve are each half the month's shortage price unless you enter a price. Net cost = energy cost (including the purchase) − sell-back revenue − spinning reserve revenue. Savings = net cost with no added purchase − optimal net cost.</div>
+      <div style="font-size:.75rem;color:#718096;margin-top:.5rem">Optimal = the added HLH MW and LLH MW (whole MW) that give the lowest net cost for the month, on top of the contracts already in the plan. Purchases are capped at the most the month needs: the largest hourly shortfall before Lehi gens (load − supply) in those hours, so power is never bought just to sell it back. HLH = HE 8–23 Mon–Sat excluding holidays; LLH = all other hours. Assumptions: added HLH and LLH are bought at the higher of the Palo or Mid-C futures price for that month + $10/MWh (the adder is editable, or enter a fixed HLH/LLH price to override). Each month's futures price is used for that month in every year (futures from data/market_prices.csv: Dec 2026–Nov 2027); shortage is costed at the month's shortage price; Lehi gens cover up to 21 MW of shortage at the internal gen rate; PX sell-back and spinning reserve are each half the month's shortage price unless you enter a price; 50% of the PX length (editable) also earns a PX capacity payment at half the PX price (that block's purchase price) unless you enter a price. Net cost = energy cost (including the purchase) − sell-back revenue − PX capacity revenue − spinning reserve revenue. Savings = net cost with no added purchase − optimal net cost.<br><b>Best Plan (Typical vs Worst):</b> shortage is priced at the Typical pool prices (2019–2025 monthly average) and at the Worst year's (2022). For each month and block, the Typical and Worst columns show the cheapest purchase if you knew that scenario was coming. Best = the purchase whose most you could lose (versus the cheapest plan in hindsight, whichever scenario happens) is smallest. Net cost "if Typical" / "if Worst" is the Best plan's cost under each scenario; savings are versus buying nothing. Enter 0 for Spinning Reserve to leave out generator spinning reserve payments.</div>
     </div>
   </div>
 
@@ -2121,6 +2146,10 @@
     const c = document.getElementById(prefix + "-cap-rate").value.trim();
     if (s !== "" && !isNaN(parseFloat(s))) q += `&sell_rate=${parseFloat(s)}`;
     if (c !== "" && !isNaN(parseFloat(c))) q += `&cap_rate=${parseFloat(c)}`;
+    const ps = document.getElementById(prefix + "-pxcap-share").value.trim();
+    const pr = document.getElementById(prefix + "-pxcap-rate").value.trim();
+    if (ps !== "" && !isNaN(parseFloat(ps))) q += `&px_cap_share=${Math.min(100, Math.max(0, parseFloat(ps))) / 100}`;
+    if (pr !== "" && !isNaN(parseFloat(pr))) q += `&px_cap_rate=${parseFloat(pr)}`;
     return q;
   }
   function revenueSummary(d) {
@@ -2129,8 +2158,10 @@
     const r   = v => "$" + (v || 0).toFixed(2);
     return `Energy cost ${usd(d.energy_cost)} − PX sell-back ${usd(d.sell_back_revenue)} ` +
            `(${Math.round(d.px_long_mwh).toLocaleString()} MWh long @ ${r(d.sell_back_rate)}/MWh) − ` +
+           `PX capacity ${usd(d.px_capacity_revenue)} (${Math.round((d.px_cap_share ?? 0.5) * 100)}% of PX long @ ` +
+           (d.px_cap_rate_hlh === d.px_cap_rate_llh ? `${r(d.px_cap_rate_hlh)}` : `HLH ${r(d.px_cap_rate_hlh)} / LLH ${r(d.px_cap_rate_llh)}`) + `/MWh) − ` +
            `spinning reserve ${usd(d.capacity_revenue)} (${Math.round(d.gen_long_mwh).toLocaleString()} MWh @ ${r(d.capacity_rate)}/MWh) ` +
-           `= net total cost ${usd(d.month_total_cost)}. Assumption: PX sell-back price and generator spinning reserve capacity payment are each half of the month's shortage price, unless you enter a price. Sell-back is paid on supply above load, up to the contract volume that hour. Spinning reserve is paid on the part of the 21 MW Lehi gens not running that hour.`;
+           `= net total cost ${usd(d.month_total_cost)}. Assumption: PX sell-back price and generator spinning reserve capacity payment are each half of the month's shortage price, unless you enter a price. Sell-back is paid on supply above load, up to the contract volume that hour. Spinning reserve is paid on the part of the 21 MW Lehi gens not running that hour. PX capacity: 50% of the PX length (editable) also earns a capacity payment, on top of its sell-back, at half the market PX price (the higher of Palo or Mid-C futures + $10, HLH or LLH) unless you enter a price.`;
   }
 
   // ── What-If price scenario: default assumptions, typical pool, or worst-year pool ──
@@ -2179,7 +2210,7 @@
   }
 
   // ── Optimal purchase plan (minimum net cost) ─────────────────────────
-  async function runOptimal() {
+  async function runOptimal(mode) {
     const status = document.getElementById("op-status");
     const q = new URLSearchParams({
       start: document.getElementById("op-start").value || "2027-01",
@@ -2194,13 +2225,18 @@
     const cr = document.getElementById("op-cap-rate").value.trim();
     if (sr !== "") q.set("sell_rate", sr);
     if (cr !== "") q.set("cap_rate", cr);
-    if (_wiScenario !== "default") q.set("pool", _wiScenario);
+    const pcs = document.getElementById("op-pxcap-share").value.trim();
+    const pcr = document.getElementById("op-pxcap-rate").value.trim();
+    q.set("px_cap_share", pcs === "" ? "0.5" : String(Math.min(100, Math.max(0, parseFloat(pcs) || 0)) / 100));
+    if (pcr !== "") q.set("px_cap_rate", pcr);
+    if (mode === "best") q.set("pool", "best");
+    else if (_wiScenario !== "default") q.set("pool", _wiScenario);
     status.textContent = "Searching every month… this can take a minute or two";
     try {
       const res = await fetch(`/api/optimal?${q}`);
       const data = await res.json();
       if (!res.ok) { status.textContent = data.detail ?? "Error"; return; }
-      renderOptimal(data);
+      if (data.pool === "best") renderBestPlan(data); else renderOptimal(data);
       status.textContent = "";
     } catch (e) {
       status.textContent = "Error: " + e.message;
@@ -2211,7 +2247,7 @@
     const usd = v => v == null ? "" : (v < 0 ? "-$" : "$") + Math.abs(Math.round(v)).toLocaleString();
     const num = v => v == null ? "" : Math.round(v).toLocaleString();
     const cols = ["Month", "Optimal HLH (MW)", "Optimal LLH (MW)", "HLH $/MWh", "LLH $/MWh", "HLH MWh", "LLH MWh", "Purchase Cost",
-                  "Energy Cost", "PX Sell-Back Revenue", "Spinning Reserve Revenue", "Net Cost",
+                  "Energy Cost", "PX Sell-Back Revenue", "PX Capacity Revenue", "Spinning Reserve Revenue", "Net Cost",
                   "Net Cost, No Purchase", "Savings", "Net $/MWh Load"];
     const thead = document.getElementById("op-thead");
     while (thead.firstChild) thead.removeChild(thead.firstChild);
@@ -2234,9 +2270,9 @@
       r.hlh_price == null ? "" : `$${r.hlh_price.toFixed(2)} (${r.hlh_price_source})`,
       r.llh_price == null ? "" : `$${r.llh_price.toFixed(2)} (${r.llh_price_source})`,
       num(r.hlh_mwh), num(r.llh_mwh), usd(r.purchase_cost), usd(r.energy_cost),
-      usd(r.sell_back_revenue), usd(r.capacity_revenue), usd(r.net_cost), usd(r.base_net_cost),
+      usd(r.sell_back_revenue), usd(r.px_capacity_revenue), usd(r.capacity_revenue), usd(r.net_cost), usd(r.base_net_cost),
       usd(r.savings), r.load_mwh ? "$" + (r.net_cost / r.load_mwh).toFixed(2) : ""], bold);
-    const keys = ["hlh_mwh", "llh_mwh", "purchase_cost", "energy_cost", "sell_back_revenue",
+    const keys = ["hlh_mwh", "llh_mwh", "purchase_cost", "energy_cost", "sell_back_revenue", "px_capacity_revenue",
                   "capacity_revenue", "net_cost", "base_net_cost", "savings", "load_mwh"];
     const sum = rows => { const t = {}; keys.forEach(k => t[k] = rows.reduce((a, r) => a + (r[k] || 0), 0)); return t; };
     const years = [...new Set(data.months.map(m => m.year))];
@@ -2246,6 +2282,50 @@
       rowOf(`${y} Total`, sum(rows), true);
     });
     if (years.length > 1) rowOf("All Years", sum(data.months), true);
+  }
+
+  // Best plan across the Typical and Worst pool scenarios (minimax regret)
+  function renderBestPlan(data) {
+    const usd = v => v == null ? "" : (v < 0 ? "-$" : "$") + Math.abs(Math.round(v)).toLocaleString();
+    const cols = ["Month", "HLH Typical (MW)", "HLH Worst (MW)", "HLH Best (MW)",
+                  "LLH Typical (MW)", "LLH Worst (MW)", "LLH Best (MW)", "Purchase Cost",
+                  "Net Cost if Typical", "Net Cost if Worst", "Savings if Typical", "Savings if Worst",
+                  "Most You Could Lose"];
+    const thead = document.getElementById("op-thead");
+    while (thead.firstChild) thead.removeChild(thead.firstChild);
+    cols.forEach(c => { const th = document.createElement("th"); th.textContent = c; thead.appendChild(th); });
+    const tbody = document.getElementById("op-tbody");
+    while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+    const BEST = new Set([3, 6]);
+    const addRow = (cells, bold, diff) => {
+      const tr = document.createElement("tr");
+      if (bold) { tr.style.fontWeight = "700"; tr.style.borderTop = "2px solid #cbd5e0"; tr.style.background = "#f7fafc"; }
+      cells.forEach((v, i) => {
+        const td = document.createElement("td");
+        td.textContent = v;
+        if (i > 0) { td.style.textAlign = "right"; td.style.fontFamily = "monospace"; td.style.whiteSpace = "nowrap"; }
+        if (BEST.has(i) && !bold) { td.style.fontWeight = "700"; td.style.background = "#ebf8ff"; }
+        if (diff && diff.has(i)) td.style.color = "#c05621";
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    };
+    const keys = ["purchase_cost", "net_cost_typical", "net_cost_worst", "savings_typical", "savings_worst", "max_regret"];
+    const money = r => keys.map(k => usd(r[k]));
+    const years = [...new Set(data.months.map(m => m.year))];
+    const sum = rows => { const t = {}; keys.forEach(k => t[k] = rows.reduce((a, r) => a + (r[k] || 0), 0)); return t; };
+    years.forEach(y => {
+      const rows = data.months.filter(m => m.year === y);
+      rows.forEach(r => {
+        const diff = new Set();
+        if (r.hlh_typical_mw !== r.hlh_worst_mw) { diff.add(1); diff.add(2); }
+        if (r.llh_typical_mw !== r.llh_worst_mw) { diff.add(4); diff.add(5); }
+        addRow([r.label, r.hlh_typical_mw, r.hlh_worst_mw, r.hlh_mw, r.llh_typical_mw, r.llh_worst_mw, r.llh_mw]
+          .map(String).concat(money(r)), false, diff);
+      });
+      addRow([`${y} Total`, "", "", "", "", "", ""].concat(money(sum(rows))), true);
+    });
+    if (years.length > 1) addRow(["All Years", "", "", "", "", "", ""].concat(money(sum(data.months))), true);
   }
 
   async function runLongterm() {
@@ -2753,6 +2833,9 @@
     const spRate   = parseFloat(document.getElementById("wi-sp-rate").value) || 63;
     const sellIn   = parseFloat(document.getElementById("wi-sell-rate").value);
     const capIn    = parseFloat(document.getElementById("wi-cap-rate").value);
+    const pxcShareIn = parseFloat(document.getElementById("wi-pxcap-share").value);
+    const pxcShare = isNaN(pxcShareIn) ? 0.5 : Math.min(100, Math.max(0, pxcShareIn)) / 100;
+    const pxcIn    = parseFloat(document.getElementById("wi-pxcap-rate").value);
     const shortIn  = document.getElementById("wi-short-rate").value.trim();
     const shortUser = shortIn === "" ? null : parseFloat(shortIn);
     const highKW   = highMW * 1000;
@@ -2813,10 +2896,16 @@
       const capOf  = L => L.hlh.gen * cH + L.llh.gen * cL;
       const curSellRev = sellOf(curLen), wiSellRev = sellOf(wiLen);
       const curCapRev  = capOf(curLen),  wiCapRev  = capOf(wiLen);
+      // PX capacity: a share of the PX length also earns capacity, at half the market PX price
+      // (higher of Palo / Mid-C + $10, from the forecast; same as Long Term) unless the user enters a price
+      const pH = isNaN(pxcIn) ? (data.px_cap_rate_hlh ?? 0) : pxcIn, pL = isNaN(pxcIn) ? (data.px_cap_rate_llh ?? 0) : pxcIn;
+      const pxcSrc = isNaN(pxcIn) ? "½ of PX price" : "your price";
+      const pxcOf  = L => (L.hlh.px * pH + L.llh.px * pL) * pxcShare;
+      const curPxcRev = pxcOf(curLen), wiPxcRev = pxcOf(wiLen);
       const curEnergy  = Object.values(data.cost_pie).reduce((a, b) => a + b, 0);
       const wiEnergy   = Object.values(wiCostPie).reduce((a, b) => a + b, 0);
-      const curNet     = curEnergy - curSellRev - curCapRev;
-      const wiNet      = wiEnergy - wiSellRev - wiCapRev;
+      const curNet     = curEnergy - curSellRev - curPxcRev - curCapRev;
+      const wiNet      = wiEnergy - wiSellRev - wiPxcRev - wiCapRev;
 
       // Blended cost = net cost (after sell-back & capacity revenue) per MWh of Lehi load,
       // so energy that is sold back doesn't dilute the rate
@@ -2864,10 +2953,12 @@
         `Current → What-If. PX long ${Math.round(curLen.pxLongMWh).toLocaleString()} → ${Math.round(wiLen.pxLongMWh).toLocaleString()} MWh @ ${sellRateTxt}/MWh (${sellSrc})`);
       setCard("wi-cap-rev", curCapRev, wiCapRev,
         `Current → What-If. Gens long ${Math.round(curLen.genLongMWh).toLocaleString()} → ${Math.round(wiLen.genLongMWh).toLocaleString()} MWh @ ${capRateTxt}/MWh (${capSrc})`);
+      setCard("wi-pxcap-rev", curPxcRev, wiPxcRev,
+        `Current → What-If. ${Math.round(pxcShare * 100)}% of PX long @ ${hl(pH, pL)}/MWh (${pxcSrc})`);
       document.getElementById("wi-current-total-note").textContent =
-        `Energy ${usd(curEnergy)} − sell-back ${usd(curSellRev)} − spinning reserve ${usd(curCapRev)}`;
+        `Energy ${usd(curEnergy)} − sell-back ${usd(curSellRev)} − PX capacity ${usd(curPxcRev)} − spinning reserve ${usd(curCapRev)}`;
       document.getElementById("wi-whatif-total-note").textContent =
-        `Energy ${usd(wiEnergy)} − sell-back ${usd(wiSellRev)} − spinning reserve ${usd(wiCapRev)}`;
+        `Energy ${usd(wiEnergy)} − sell-back ${usd(wiSellRev)} − PX capacity ${usd(wiPxcRev)} − spinning reserve ${usd(wiCapRev)}`;
       document.getElementById("wi-current-total").innerHTML =
         `$${Math.round(currentTotalCost).toLocaleString()}`;
       document.getElementById("wi-whatif-total").innerHTML =
@@ -3224,7 +3315,7 @@
     const div  = (a, b) => (a != null && b) ? a / b : null;
     const cols = ["Month", "Predicted Load", "Load", "Predicted Shortage", "Shortage",
                   "Predicted Shortage %", "Shortage %", "Predicted Energy Cost", "Predicted PX Sell-Back Revenue",
-                  "Predicted Spinning Reserve Revenue", "Predicted Total Cost (Net)", "Total Cost",
+                  "Predicted PX Capacity Revenue", "Predicted Spinning Reserve Revenue", "Predicted Total Cost (Net)", "Total Cost",
                   "Predicted Blended Rate ($/MWh)", "Blended Rate ($/MWh)"];
     const thead = document.getElementById("mt-year-thead");
     while (thead.firstChild) thead.removeChild(thead.firstChild);
@@ -3243,7 +3334,7 @@
       });
       tbody.appendChild(tr);
     };
-    const T = { pe: 0, psb: 0, pcr: 0, pl: 0, l: 0, ps: 0, s: 0, pc: 0, c: 0, plForCost: 0, lForCost: 0, lForShort: 0, plForShort: 0 };
+    const T = { pe: 0, psb: 0, pcr: 0, ppc: 0, pl: 0, l: 0, ps: 0, s: 0, pc: 0, c: 0, plForCost: 0, lForCost: 0, lForShort: 0, plForShort: 0 };
     data.months.forEach(m => {
       const pRate = div(m.pred_total_cost, m.pred_load_kwh != null ? m.pred_load_kwh / 1000 : null);
       const aRate = m.blended_rate != null ? m.blended_rate : div(m.total_cost, m.load_kwh != null ? m.load_kwh / 1000 : null);
@@ -3251,11 +3342,12 @@
       const aPct  = div(m.shortage_kwh, m.load_kwh);
       addRow([m.name, num(m.pred_load_kwh), num(m.load_kwh) + (m.load_source === "meters" ? " *" : ""), num(m.pred_shortage_kwh), num(m.shortage_kwh),
               pPct == null ? "" : pct(pPct * 100), aPct == null ? "" : pct(aPct * 100),
-              usd(m.pred_energy_cost), usd(m.pred_sell_back_revenue), usd(m.pred_capacity_revenue),
+              usd(m.pred_energy_cost), usd(m.pred_sell_back_revenue), usd(m.pred_px_capacity_revenue), usd(m.pred_capacity_revenue),
               usd(m.pred_total_cost), usd(m.total_cost), rate(pRate), rate(aRate)]);
       if (m.pred_energy_cost != null) T.pe += m.pred_energy_cost;
       if (m.pred_sell_back_revenue != null) T.psb += m.pred_sell_back_revenue;
       if (m.pred_capacity_revenue != null) T.pcr += m.pred_capacity_revenue;
+      if (m.pred_px_capacity_revenue != null) T.ppc += m.pred_px_capacity_revenue;
       if (m.pred_load_kwh != null) T.pl += m.pred_load_kwh;
       if (m.load_kwh != null) T.l += m.load_kwh;
       if (m.pred_shortage_kwh != null) { T.ps += m.pred_shortage_kwh; if (m.pred_load_kwh) T.plForShort += m.pred_load_kwh; }
@@ -3269,7 +3361,7 @@
       any("pred_shortage_kwh") ? num(T.ps) : "", any("shortage_kwh") ? num(T.s) : "",
       T.plForShort ? pct(T.ps / T.plForShort * 100) : "", T.lForShort ? pct(T.s / T.lForShort * 100) : "",
       any("pred_energy_cost") ? usd(T.pe) : "", any("pred_sell_back_revenue") ? usd(T.psb) : "",
-      any("pred_capacity_revenue") ? usd(T.pcr) : "",
+      any("pred_px_capacity_revenue") ? usd(T.ppc) : "", any("pred_capacity_revenue") ? usd(T.pcr) : "",
       any("pred_total_cost") ? usd(T.pc) : "", any("total_cost") ? usd(T.c) : "",
       T.plForCost ? rate(T.pc / (T.plForCost / 1000)) : "", T.lForCost ? rate(T.c / (T.lForCost / 1000)) : "",
     ], true);
